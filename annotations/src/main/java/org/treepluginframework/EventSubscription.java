@@ -1,4 +1,4 @@
-package org.treepluginframework.EventSystem.ComponentArchitecture;
+package org.treepluginframework;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

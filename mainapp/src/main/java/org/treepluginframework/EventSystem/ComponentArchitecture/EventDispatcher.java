@@ -1,5 +1,6 @@
 package org.treepluginframework.EventSystem.ComponentArchitecture;
 
+import org.treepluginframework.EventSubscription;
 import org.treepluginframework.EventSystem.EventArchitecture.IEvent;
 
 import java.lang.reflect.Method;

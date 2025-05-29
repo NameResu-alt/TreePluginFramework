@@ -1,8 +1,7 @@
 package org.treepluginframework.EventSystem.EventArchitecture;
 
+import org.treepluginframework.EventSubscription;
 import org.treepluginframework.EventSystem.ComponentArchitecture.Component;
-import org.treepluginframework.EventSystem.ComponentArchitecture.EventSubscription;
-
 public class Test2Component extends Component {
 
     @EventSubscription
