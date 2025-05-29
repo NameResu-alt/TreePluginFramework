@@ -88,16 +88,8 @@ public class EventSubscriberProcessor extends AbstractProcessor {
             return;
         }
 
-        /*
-        String checking = "Checking: " + typeUtils.isAssignable(adapterTypeMirror, adapterClassMirror);
-        checking += "\n"+adapterTypeMirror.toString();
-         */
-
         DeclaredType adapterDeclaredType = (DeclaredType) adapterParameter.asType();
-        TypeElement adapterTypeElement = (TypeElement) adapterDeclaredType.asElement();
-
-        TypeMirror genericEventType = getGenericParameterFromAdapter(adapterTypeElement, adapterClassMirror);
-
+        TypeMirror genericEventType = getGenericParameterFromAdapter(adapterDeclaredType, adapterClassMirror);
         if(genericEventType == null)
         {
             error("Invalid EventAdapter, potentially not a descendant from EventAdapter class",adapterParameter);
@@ -107,19 +99,43 @@ public class EventSubscriberProcessor extends AbstractProcessor {
         //Okay, now that I have the generic, this is what I have to do.
         //I need to see if the event is assignable from the generic type. If it's not, type missmatch.
 
-
         boolean adapterEventCompatible = typeUtils.isAssignable(eventTypeMirror,genericEventType);
-
         if(!adapterEventCompatible)
         {
             error("Event of type " + eventTypeMirror.toString() + " is not assignable to the event's adapters expected event type, " + genericEventType.toString(), eventParameter);
             return;
         }
-
-        //String checking = "Type of generic: " + genericEventType.toString() + " " + maybe;
     }
 
+    private TypeMirror getGenericParameterFromAdapter(DeclaredType adapterType, TypeMirror targetBaseMirror) {
+        Types typeUtils = processingEnv.getTypeUtils();
 
+        DeclaredType current = adapterType;
+
+        while (true) {
+            TypeElement currentElement = (TypeElement) current.asElement();
+            TypeMirror erasedCurrent = typeUtils.erasure(current);
+            TypeMirror erasedTarget = typeUtils.erasure(targetBaseMirror);
+
+            if (typeUtils.isSameType(erasedCurrent, erasedTarget)) {
+                List<? extends TypeMirror> typeArguments = current.getTypeArguments();
+                if (!typeArguments.isEmpty()) {
+                    return typeArguments.get(0);
+                }
+            }
+
+            TypeMirror superclass = currentElement.getSuperclass();
+            if (!(superclass instanceof DeclaredType superclassDeclared)) {
+                break;
+            }
+
+            current = superclassDeclared;
+        }
+
+        return null;
+    }
+
+    /*
     private TypeMirror getGenericParameterFromAdapter(TypeElement subclassElement, TypeMirror targetBaseMirror) {
         Types typeUtils = processingEnv.getTypeUtils();
 
@@ -145,7 +161,7 @@ public class EventSubscriberProcessor extends AbstractProcessor {
 
         return null; // Not found
     }
-
+    */
 
     /***
      *
@@ -169,6 +185,7 @@ public class EventSubscriberProcessor extends AbstractProcessor {
         //Realistically, the only thing I have to check against are primitives, and making sure that first parameter isn't an EventAdapter Itself
         //Like I mean, I can allow an EventAdapter of an EventAdapter, but that's just kinda rough.
 
+        /*
         // Check String
         TypeElement stringElement = elementUtils.getTypeElement("java.lang.String");
         if (stringElement != null) {
@@ -192,6 +209,7 @@ public class EventSubscriberProcessor extends AbstractProcessor {
             error("First parameter must NOT be a Map", firstParameter);
             return true;
         }
+        */
 
         return false;
     }

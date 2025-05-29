@@ -66,6 +66,26 @@ public class EventDispatcher {
                     Class<?>[] params = method.getParameterTypes();
 
                     boolean used = false;
+                    boolean expectsAdapter = false;
+                    if(params.length == 1)
+                    {
+                        used = true;
+                        expectsAdapter = false;
+                    } else if (params.length == 2 &&
+                            EventAdapter.class.isAssignableFrom(params[1])) {
+                        used = true;
+                        expectsAdapter = true;
+                    }
+
+                    if(used){
+                        System.out.println("Added a subscription for the event " + params[0].toString());
+                        EventSubscription annotation = method.getAnnotation(EventSubscription.class);
+                        int priority = annotation.priority();
+                        method.setAccessible(true);
+                        map.put(params[0], new HandlerHolder(method, priority,expectsAdapter));
+                        break;
+                    }
+                    /*
                     for(Class<?> classType : acceptableEventTypes){
                         boolean expectsAdapter = false;
                         if(params.length == 1 && classType.isAssignableFrom(params[0]))
@@ -88,6 +108,8 @@ public class EventDispatcher {
                             break;
                         }
                     }
+                    */
+
 
                     if(!used)
                     {
@@ -133,12 +155,17 @@ public class EventDispatcher {
     }
 
     /**
-     * Emit an event from a given component.
+     * Emit an event that's native to the code.
      */
     public void emit(Object fromComponent, IEvent event) {
         dispatch(fromComponent, new NativeEventAdapter(event));
     }
 
+    /**
+     * Emit an event that's not native to the code
+     * @param fromComponent
+     * @param adapter
+     */
     public void emit(Object fromComponent, EventAdapter<?> adapter){dispatch(fromComponent,adapter);}
 
     /**
