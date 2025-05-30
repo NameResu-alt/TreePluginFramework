@@ -6,7 +6,7 @@ import org.treepluginframework.EventSystem.EventArchitecture.IEvent;
 import java.lang.reflect.Method;
 import java.util.*;
 
-public class EventDispatcher {
+public final class EventDispatcher {
     // Singleton instance
     private static final EventDispatcher INSTANCE = new EventDispatcher();
 
