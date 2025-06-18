@@ -61,7 +61,7 @@ public class TPFContext {
             System.out.println(visited);
             throw new IllegalStateException("A node has been visited more than once!: Child: " + current.getSimpleName() + " Parent: " +  (parent == null ? "null" : parent.getSimpleName()));
         }
-
+        visited.add(current);
         Object parentObj = registry.getOrDefault(parent,null);
         Object childObj = registry.get(current);
 
@@ -76,6 +76,7 @@ public class TPFContext {
 
     static {
 
+        System.out.println("I'm running the static block for the TPFContext!");
         Set<Class<?>> containsAutoWire = new HashSet<>();
         HashMap<Class<?>,Set<Class<?>>> children = new HashMap<>();
         try(InputStream is = ClassLoader.getSystemResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
@@ -95,6 +96,7 @@ public class TPFContext {
 
                         TPFAutoWireCache cache = cachedFields.computeIfAbsent(originClass, k -> new TPFAutoWireCache());
 
+                        System.out.println("Class " + originClassName + " got DI of " + targetClassName);
                         Field field = originClass.getDeclaredField(fieldName);
                         field.setAccessible(true);
                         cache.addField(targetClass,field);
@@ -124,6 +126,7 @@ public class TPFContext {
                             objectsToInject.add(instance);
                         }
 
+                        System.out.println("TPFContext added class of type " + className);
                         registry.put(clazz, instance);
                     } catch (Exception e) {
                         System.err.println("Failed to load class into TPFContext: " + className);
