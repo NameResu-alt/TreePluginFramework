@@ -107,11 +107,14 @@ public class TPFWiringProcessor extends AbstractProcessor {
                             continue;
                         }
 
+                        /*
                         if(parents.contains(wireTarget))
                         {
                             error("The class " + wireTarget + " is already the parent of another node",element);
                             continue;
                         }
+                        */
+
                         parents.add(className);
 
 
