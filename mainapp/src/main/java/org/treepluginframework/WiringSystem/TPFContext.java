@@ -77,9 +77,11 @@ public class TPFContext {
 
     static {
 
-        System.out.println("I'm running the static block for the TPFContext!");
+        System.out.println("I'm running the static block for the TPFContext, should be newest version!");
         Set<Class<?>> containsAutoWire = new HashSet<>();
         HashMap<Class<?>,Set<Class<?>>> children = new HashMap<>();
+
+        System.out.println("ClassLoaderName: " + TPFContext.class.getClassLoader().getName());
 
         try(InputStream is = TPFContext.class.getClassLoader().getSystemResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
             if(is != null){
