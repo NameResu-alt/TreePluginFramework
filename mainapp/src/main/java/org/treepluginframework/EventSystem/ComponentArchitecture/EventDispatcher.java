@@ -2,11 +2,13 @@ package org.treepluginframework.EventSystem.ComponentArchitecture;
 
 import org.treepluginframework.EventSubscription;
 import org.treepluginframework.EventSystem.EventArchitecture.IEvent;
+import org.treepluginframework.WiringSystem.TPFContext;
 
 import java.lang.reflect.Method;
 import java.util.*;
 
 public final class EventDispatcher {
+
     // Singleton instance
     private static final EventDispatcher INSTANCE = new EventDispatcher();
 

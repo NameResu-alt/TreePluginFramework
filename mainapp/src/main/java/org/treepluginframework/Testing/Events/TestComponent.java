@@ -1,10 +1,9 @@
-package org.treepluginframework.EventSystem.EventArchitecture;
+package org.treepluginframework.Testing.Events;
 
 
 import org.treepluginframework.EventSubscription;
 import org.treepluginframework.EventSystem.ComponentArchitecture.Component;
-import org.treepluginframework.EventSystem.ComponentArchitecture.EventAdapter;
-import org.treepluginframework.EventSystem.ComponentArchitecture.NativeEventAdapter;
+import org.treepluginframework.EventSystem.EventArchitecture.IEvent;
 
 public class TestComponent extends Component {
     private int timesGottenTest;
