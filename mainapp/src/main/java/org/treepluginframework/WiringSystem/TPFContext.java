@@ -10,6 +10,7 @@ import java.lang.reflect.Field;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 public class TPFContext {
     private static final Map<Class<?>, Object> registry = new HashMap<>();
@@ -79,8 +80,14 @@ public class TPFContext {
         System.out.println("I'm running the static block for the TPFContext!");
         Set<Class<?>> containsAutoWire = new HashSet<>();
         HashMap<Class<?>,Set<Class<?>>> children = new HashMap<>();
+
         try(InputStream is = ClassLoader.getSystemResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
             if(is != null){
+                BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+                List<String> lines = reader.lines().collect(Collectors.toList());
+                System.out.println("Lines in auto-child-wires: " + lines.size());
+                lines.forEach(line -> System.out.println("  Line: " + line));
+
                 new BufferedReader(new InputStreamReader(is)).lines().forEach(classPair ->{
                     try {
                         String[] info = classPair.split(",");
@@ -114,6 +121,10 @@ public class TPFContext {
         HashMap<Class<?>,Set<Class<?>>> graph = new HashMap<>();
         List<Object> objectsToInject = new ArrayList<>();
         try (InputStream is = ClassLoader.getSystemResourceAsStream("META-INF/tpf-context/auto-node")) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+            List<String> lines = reader.lines().collect(Collectors.toList());
+            System.out.println("Lines in auto-node: " + lines.size());
+            lines.forEach(line -> System.out.println("  Line: " + line));
             if (is != null) {
                 new BufferedReader(new InputStreamReader(is)).lines().forEach(className -> {
                     try {
