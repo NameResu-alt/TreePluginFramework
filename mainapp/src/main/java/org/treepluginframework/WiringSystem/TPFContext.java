@@ -81,7 +81,7 @@ public class TPFContext {
         Set<Class<?>> containsAutoWire = new HashSet<>();
         HashMap<Class<?>,Set<Class<?>>> children = new HashMap<>();
 
-        try(InputStream is = ClassLoader.getSystemResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
+        try(InputStream is = TPFContext.class.getClassLoader().getSystemResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
             if(is != null){
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is));
                 List<String> lines = reader.lines().collect(Collectors.toList());
@@ -120,12 +120,12 @@ public class TPFContext {
 
         HashMap<Class<?>,Set<Class<?>>> graph = new HashMap<>();
         List<Object> objectsToInject = new ArrayList<>();
-        try (InputStream is = ClassLoader.getSystemResourceAsStream("META-INF/tpf-context/auto-node")) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-            List<String> lines = reader.lines().collect(Collectors.toList());
-            System.out.println("Lines in auto-node: " + lines.size());
-            lines.forEach(line -> System.out.println("  Line: " + line));
+        try (InputStream is = TPFContext.class.getClassLoader().getSystemResourceAsStream("META-INF/tpf-context/auto-node")) {
             if (is != null) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+                List<String> lines = reader.lines().collect(Collectors.toList());
+                System.out.println("Lines in auto-node: " + lines.size());
+                lines.forEach(line -> System.out.println("  Line: " + line));
                 new BufferedReader(new InputStreamReader(is)).lines().forEach(className -> {
                     try {
                         Class<?> clazz = Class.forName(className);
