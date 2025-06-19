@@ -81,10 +81,26 @@ public class TPFContext {
         Set<Class<?>> containsAutoWire = new HashSet<>();
         HashMap<Class<?>,Set<Class<?>>> children = new HashMap<>();
 
-        System.out.println("ClassLoaderName: " + TPFContext.class.getClassLoader().getName());
+        // Should work in most environments
+        InputStream is1 = TPFContext.class.getClassLoader()
+                .getResourceAsStream("META-INF/tpf-context/auto-node");
 
-        System.out.println("Checking 2: " + Thread.currentThread().getContextClassLoader());
-        System.out.println("Checking 3: " + ClassLoader.getSystemClassLoader());
+// Try thread context loader
+        InputStream is2 = Thread.currentThread().getContextClassLoader()
+                .getResourceAsStream("META-INF/tpf-context/auto-node");
+
+// Fallback
+        InputStream is3 = ClassLoader.getSystemClassLoader()
+                .getResourceAsStream("META-INF/tpf-context/auto-node");
+
+        InputStream is4 = Thread.currentThread().getContextClassLoader()
+                .getResourceAsStream("plugin.yml");
+
+        System.out.println("is1: " + (is1 != null));
+        System.out.println("is2: " + (is2 != null));
+        System.out.println("is3: " + (is3 != null));
+        System.out.println("is4: " + (is4 != null));
+
         try(InputStream is = Thread.currentThread()
                 .getContextClassLoader()
                 .getResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
