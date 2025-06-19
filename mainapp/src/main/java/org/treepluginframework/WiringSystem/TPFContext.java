@@ -120,10 +120,11 @@ public class TPFContext {
         System.out.println("is3: " + (is3 != null));
         System.out.println("is4: " + (is4 != null));
 
-        try(InputStream is = Thread.currentThread()
-                .getContextClassLoader()
+        try(InputStream is = TPFContext.class.getClassLoader()
                 .getResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
+            System.out.println("Please god, let this work");
             if(is != null){
+                System.out.println("Actually got inside the file!");
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is));
                 List<String> lines = reader.lines().collect(Collectors.toList());
                 System.out.println("Lines in auto-child-wires: " + lines.size());
@@ -161,8 +162,7 @@ public class TPFContext {
 
         HashMap<Class<?>,Set<Class<?>>> graph = new HashMap<>();
         List<Object> objectsToInject = new ArrayList<>();
-        try (InputStream is = Thread.currentThread()
-                .getContextClassLoader()
+        try (InputStream is = TPFContext.class.getClassLoader()
                 .getResourceAsStream("META-INF/tpf-context/auto-node")) {
             if (is != null) {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is));
