@@ -4,9 +4,7 @@ import com.google.auto.service.AutoService;
 
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
-import javax.lang.model.element.Element;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
+import javax.lang.model.element.*;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
@@ -48,7 +46,32 @@ public class TPFWiringProcessor extends AbstractProcessor {
                 );
                 try (Writer writer = file.openWriter()) {
                     for (Element element : nodeElements) {
-                        String className = ((TypeElement) element).getQualifiedName().toString();
+
+                        TypeElement typeElement = (TypeElement) element;
+
+                        boolean hasNoConstructor = true;
+                        boolean hasOnlyNoArgsConstructor = true;
+
+                        Element problem = null;
+                        for (Element enclosed : typeElement.getEnclosedElements()) {
+                            if (enclosed.getKind() == ElementKind.CONSTRUCTOR) {
+                                hasNoConstructor = false;
+                                ExecutableElement constructor = (ExecutableElement) enclosed;
+                                if (!constructor.getParameters().isEmpty()) {
+                                    hasOnlyNoArgsConstructor = false;
+                                    problem = enclosed;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!hasNoConstructor && !hasOnlyNoArgsConstructor) {
+                            error("Class annotated with @TPFNode must have either no constructor or only a no-args constructor.",problem);
+                            continue;
+                        }
+
+                        // Safe to use
+                        String className = typeElement.getQualifiedName().toString();
                         writer.write(className + "\n");
                     }
                 }

@@ -81,45 +81,6 @@ public class TPFContext {
         Set<Class<?>> containsAutoWire = new HashSet<>();
         HashMap<Class<?>,Set<Class<?>>> children = new HashMap<>();
 
-        try (InputStream is = TPFContext.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf-context/auto-node")) {
-            if (is == null) {
-                System.out.println("File not found of Auto-Node.");
-            } else {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-                String line;
-                System.out.println("Contents of auto-node:");
-                while ((line = reader.readLine()) != null) {
-                    System.out.println(line);
-                }
-            }
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        // Should work in most environments
-        InputStream is1 = TPFContext.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf-context/auto-node");
-
-
-
-// Try thread context loader
-        InputStream is2 = Thread.currentThread().getContextClassLoader()
-                .getResourceAsStream("META-INF/tpf-context/auto-node");
-
-// Fallback
-        InputStream is3 = ClassLoader.getSystemClassLoader()
-                .getResourceAsStream("META-INF/tpf-context/auto-node");
-
-        InputStream is4 = Thread.currentThread().getContextClassLoader()
-                .getResourceAsStream("plugin.yml");
-
-        System.out.println("is1: " + (is1 != null));
-        System.out.println("is2: " + (is2 != null));
-        System.out.println("is3: " + (is3 != null));
-        System.out.println("is4: " + (is4 != null));
-
         try(InputStream is = TPFContext.class.getClassLoader()
                 .getResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
             if(is != null) {
