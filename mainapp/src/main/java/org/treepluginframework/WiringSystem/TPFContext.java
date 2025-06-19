@@ -122,15 +122,14 @@ public class TPFContext {
 
         try(InputStream is = TPFContext.class.getClassLoader()
                 .getResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
-            System.out.println("Please god, let this work");
-            if(is != null){
-                System.out.println("Actually got inside the file!");
+            if(is != null) {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is));
                 List<String> lines = reader.lines().collect(Collectors.toList());
                 System.out.println("Lines in auto-child-wires: " + lines.size());
                 lines.forEach(line -> System.out.println("  Line: " + line));
 
-                new BufferedReader(new InputStreamReader(is)).lines().forEach(classPair ->{
+                for (String classPair : lines)
+                {
                     try {
                         String[] info = classPair.split(",");
                         String originClassName = info[0];
@@ -153,7 +152,8 @@ public class TPFContext {
                         System.err.println("Failed to wire pair: " + classPair);
                         e.printStackTrace();
                     }
-                });
+                }
+
             }
         } catch (IOException e) {
             System.err.println("Could not read auto-wires file.");
@@ -169,7 +169,9 @@ public class TPFContext {
                 List<String> lines = reader.lines().collect(Collectors.toList());
                 System.out.println("Lines in auto-node: " + lines.size());
                 lines.forEach(line -> System.out.println("  Line: " + line));
-                new BufferedReader(new InputStreamReader(is)).lines().forEach(className -> {
+
+                for(String className : lines)
+                {
                     try {
                         Class<?> clazz = Class.forName(className);
                         graph.put(clazz, children.getOrDefault(clazz, new HashSet<>()));
@@ -186,7 +188,7 @@ public class TPFContext {
                         System.err.println("Failed to load class into TPFContext: " + className);
                         e.printStackTrace();
                     }
-                });
+                }
             }
         } catch (IOException e) {
             System.err.println("Could not read auto-node file.");
