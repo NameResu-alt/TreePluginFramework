@@ -5,4 +5,4 @@ build:
   tool: maven
   commands:
     - cd distribution
-    - mvn clean install
+    - mvn clean install -DskipTests

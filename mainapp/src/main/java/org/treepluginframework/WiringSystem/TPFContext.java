@@ -83,6 +83,8 @@ public class TPFContext {
 
         System.out.println("ClassLoaderName: " + TPFContext.class.getClassLoader().getName());
 
+        System.out.println("Checking 2: " + Thread.currentThread().getContextClassLoader());
+        System.out.println("Checking 3: " + ClassLoader.getSystemClassLoader());
         try(InputStream is = Thread.currentThread()
                 .getContextClassLoader()
                 .getResourceAsStream("META-INF/tpf-context/auto-child-wires")) {
