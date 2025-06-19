@@ -1,0 +1,8 @@
+jdk:
+  - openjdk21
+
+build:
+  tool: maven
+  commands:
+    - cd distribution
+    - mvn clean install
