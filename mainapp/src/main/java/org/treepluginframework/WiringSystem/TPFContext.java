@@ -81,9 +81,28 @@ public class TPFContext {
         Set<Class<?>> containsAutoWire = new HashSet<>();
         HashMap<Class<?>,Set<Class<?>>> children = new HashMap<>();
 
+        try (InputStream is = TPFContext.class.getClassLoader()
+                .getResourceAsStream("META-INF/tpf-context/auto-node")) {
+            if (is == null) {
+                System.out.println("File not found of Auto-Node.");
+            } else {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+                String line;
+                System.out.println("Contents of auto-node:");
+                while ((line = reader.readLine()) != null) {
+                    System.out.println(line);
+                }
+            }
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
         // Should work in most environments
         InputStream is1 = TPFContext.class.getClassLoader()
                 .getResourceAsStream("META-INF/tpf-context/auto-node");
+
+
 
 // Try thread context loader
         InputStream is2 = Thread.currentThread().getContextClassLoader()
