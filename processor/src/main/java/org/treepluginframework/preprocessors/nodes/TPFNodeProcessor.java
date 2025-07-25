@@ -419,7 +419,16 @@ public class TPFNodeProcessor extends AbstractProcessor {
                         continue;
                     }
 
+
+
                     TypeElement parameterType = (TypeElement) processingEnv.getTypeUtils().asElement(paramType);
+
+                    if(parameterType.getAnnotation(TPFNode.class) == null && parameterType.getAnnotation(TPFResource.class) == null)
+                    {
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Parameters for TPFNode/Resource main constructor must be TPFNode/Resources themselves, or be annotated with TPFValue: " + paramType.getClass().getCanonicalName(), parameter);
+                        errorOccurred = true;
+                        continue;
+                    }
 
                     //If it didn't, now I manually have to go through and see what I could use instead.
                     //If ambiguous, throw an error.
@@ -513,7 +522,8 @@ public class TPFNodeProcessor extends AbstractProcessor {
                     //allClassData.computeIfAbsent(desiredClass, k-> new ClassValueMetadata());
 
                     //Just in case the dependency itself never uses the constructor stuff, make sure to still have it around.
-                    constructorInformation.computeIfAbsent(desiredClass, k->new ConstructorInformation());
+                    //Bad, don't do this, since it can add constructors to classes that don't exist.
+                    //constructorInformation.computeIfAbsent(desiredClass, k->new ConstructorInformation());
                 }
 
                 //Add the dependencies to the class Metadata.
@@ -548,28 +558,29 @@ public class TPFNodeProcessor extends AbstractProcessor {
         return null;
     }
 
+    private void writeTPFFile(TPFMetadataFile metaFile){
+        try {
+            // Create resource file under META-INF/tpf/
+            FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.json");
+            try (Writer writer = file.openWriter()) {
+                // Serialize your object to JSON string (using Jackson or Gson)
+                ObjectMapper mapper = new ObjectMapper();
+                String jsonString = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(metaFile);
+
+                // Write JSON string to the file
+                writer.write(jsonString);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            // handle or propagate error as appropriate
+        }
+    }
+
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         if(roundEnv.processingOver()) return false;
 
-        boolean alreadyGenerated = false;
-        try {
-            FileObject resource = processingEnv.getFiler()
-                    .getResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.lock");
-            resource.openInputStream().close(); // Try reading
-            alreadyGenerated = true; // If no exception, it exists
-        } catch (IOException e) {
-            // Lock file doesn't exist yet
-            alreadyGenerated = false;
-        }
 
-
-        //processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, " Lock file present");
-        //if(alreadyGenerated) return false;
-        //processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, " Lock file missing");
-
-
-        count += 1;
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Processing round. Over=" + roundEnv.processingOver() + ", Annotations=" + roundEnv.getRootElements().size() + " Count: " + count);
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "\t " +roundEnv.getRootElements());
         List<Element> tpfComponents = new ArrayList<>();
@@ -591,8 +602,6 @@ public class TPFNodeProcessor extends AbstractProcessor {
         if(tpfComponents.isEmpty() && valueElements.isEmpty()){
             return false;
         }
-
-
 
 
         boolean encounteredDoubleAnnotation = preventNodeAndResourceAnnotation(tpfComponents);
@@ -633,16 +642,21 @@ public class TPFNodeProcessor extends AbstractProcessor {
             return true;
         }
 
-
-
-
         TopologicalSort.SortResult sortResult = TopologicalSort.kahnTopologicalSort(adjacencyList);
         if(sortResult.sortedList == null){
             StringBuilder cycleMsg = new StringBuilder("Cycle detected in dependencies between:\n");
 
-            for (TypeElement elem : sortResult.cycleNodes) {
+            for (TypeElement elem : new LinkedHashSet<>(sortResult.cycleNodes)) { // preserve order
                 cycleMsg.append(" - ").append(elem.getQualifiedName()).append("\n");
             }
+
+            cycleMsg.append("\nCycle path:\n    ");
+
+            String cyclePath = sortResult.cycleNodes.stream()
+                    .map(elem -> elem.getQualifiedName().toString())
+                    .collect(Collectors.joining(" → "));
+
+            cycleMsg.append(cyclePath);
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, cycleMsg.toString());
             return true;
         }
@@ -665,26 +679,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
 
             TPFMetadataFile metaFile = new TPFMetadataFile(valueInformation, constructorCreationOrder, configLocations);
             //Serialize this metaFile now.
-            try {
-                // Create resource file under META-INF/tpf/
-                FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.json");
-                try (Writer writer = file.openWriter()) {
-                    // Serialize your object to JSON string (using Jackson or Gson)
-                    ObjectMapper mapper = new ObjectMapper();
-                    String jsonString = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(metaFile);
-
-                    // Write JSON string to the file
-                    writer.write(jsonString);
-
-                    // 4. Write the lock file
-                    FileObject lockFile = processingEnv.getFiler()
-                            .createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.lock");
-                    lockFile.openWriter().close(); // empty file, just a marker
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-                // handle or propagate error as appropriate
-            }
+            writeTPFFile(metaFile);
         }
 
         return true;
@@ -692,6 +687,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
 
     private class TopologicalSort {
 
+        /*
         public static SortResult kahnTopologicalSort(HashMap<TypeElement, List<TypeElement>> adjacencyList) {
             Map<TypeElement, Integer> inDegree = new HashMap<>();
 
@@ -741,6 +737,100 @@ public class TPFNodeProcessor extends AbstractProcessor {
             }
 
             return new SortResult(sortedList, null);
+        }
+        */
+
+        public static SortResult kahnTopologicalSort(HashMap<TypeElement, List<TypeElement>> adjacencyList) {
+            Map<TypeElement, Integer> inDegree = new HashMap<>();
+
+            for (TypeElement node : adjacencyList.keySet()) {
+                inDegree.putIfAbsent(node, 0);
+                for (TypeElement neighbor : adjacencyList.get(node)) {
+                    inDegree.put(neighbor, inDegree.getOrDefault(neighbor, 0) + 1);
+                }
+            }
+
+            PriorityQueue<TypeElement> queue = new PriorityQueue<>(Comparator.comparing(o -> o.getSimpleName().toString()));
+
+            for (Map.Entry<TypeElement, Integer> entry : inDegree.entrySet()) {
+                if (entry.getValue() == 0) {
+                    queue.offer(entry.getKey());
+                }
+            }
+
+            List<TypeElement> sortedList = new ArrayList<>();
+            while (!queue.isEmpty()) {
+                TypeElement current = queue.poll();
+                sortedList.add(current);
+
+                for (TypeElement neighbor : adjacencyList.getOrDefault(current, Collections.emptyList())) {
+                    inDegree.put(neighbor, inDegree.get(neighbor) - 1);
+                    if (inDegree.get(neighbor) == 0) {
+                        queue.offer(neighbor);
+                    }
+                }
+            }
+
+            if (sortedList.size() != inDegree.size()) {
+                // Cycle exists; extract real cycle path
+                List<TypeElement> cyclePath = findCycleDFS(adjacencyList);
+                return new SortResult(null, cyclePath);
+            }
+
+            return new SortResult(sortedList, null);
+        }
+
+
+        // Helper to extract the cycle path using DFS
+        private static List<TypeElement> findCycleDFS(Map<TypeElement, List<TypeElement>> graph) {
+            Set<TypeElement> visited = new HashSet<>();
+            Set<TypeElement> recStack = new HashSet<>();
+            Deque<TypeElement> path = new ArrayDeque<>();
+
+            for (TypeElement node : graph.keySet()) {
+                if (dfsCycle(node, graph, visited, recStack, path)) {
+                    // Cycle has been detected; extract it
+                    TypeElement start = path.peek(); // node where cycle was detected
+                    List<TypeElement> reversedPath = new ArrayList<>(path);
+                    Collections.reverse(reversedPath);
+
+                    List<TypeElement> cycle = new ArrayList<>();
+                    for (TypeElement elem : reversedPath) {
+                        cycle.add(elem);
+                        if (elem.equals(start) && cycle.size() > 1) break;
+                    }
+                    Collections.reverse(cycle); // Optional: keep original direction
+                    cycle.add(start); // Close the cycle explicitly
+                    return cycle;
+                }
+            }
+            return null;
+        }
+
+        private static boolean dfsCycle(TypeElement node,
+                                        Map<TypeElement, List<TypeElement>> graph,
+                                        Set<TypeElement> visited,
+                                        Set<TypeElement> recStack,
+                                        Deque<TypeElement> path) {
+            if (recStack.contains(node)) {
+                return true;
+            }
+
+            if (visited.contains(node)) return false;
+
+            visited.add(node);
+            recStack.add(node);
+            path.push(node);
+
+            for (TypeElement neighbor : graph.getOrDefault(node, List.of())) {
+                if (dfsCycle(neighbor, graph, visited, recStack, path)) {
+                    return true;
+                }
+            }
+
+            recStack.remove(node);
+            path.pop();
+            return false;
         }
 
         private static class SortResult {

@@ -1,14 +1,17 @@
 package org.treepluginframework.preprocessors.events;
 
-import javax.annotation.processing.AbstractProcessor;
-import javax.annotation.processing.Filer;
-import javax.annotation.processing.ProcessingEnvironment;
-import javax.annotation.processing.RoundEnvironment;
+import com.google.auto.service.AutoService;
+import org.treepluginframework.annotations.EventSubscription;
+
+import javax.annotation.processing.*;
+import javax.lang.model.SourceVersion;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import java.util.Set;
 
+@AutoService(javax.annotation.processing.Processor.class)
+@SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class TPFEventSubscriberProcessor extends AbstractProcessor {
-
     private Filer filer;
 
     @Override
@@ -20,11 +23,15 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
     //Make sure that a TPFNode can't also be marked as a resource.
     @Override
     public Set<String> getSupportedAnnotationTypes(){
-        return Set.of("org.treepluginframework.EventSubscription");
+        return Set.of("org.treepluginframework.annotations.EventSubscription");
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        return false;
+        Set<? extends Element> eventAnnotations = roundEnv.getElementsAnnotatedWith(EventSubscription.class);
+        System.out.println("Are you doing this at all?!");
+        if(eventAnnotations.isEmpty()) return false;
+
+        return true;
     }
 }

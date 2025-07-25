@@ -1,10 +1,11 @@
 package org.treepluginframework;
 
+
 import org.treepluginframework.component_architecture.TPF;
-/// TODO: What to do if a constructor has more than 1 type that's the same?
+
 public class Main {
     public static void main(String[] args) {
-        System.out.println("Hello, World!");
-
+        TPF newTPF = new TPF();
+        newTPF.start();
     }
 }

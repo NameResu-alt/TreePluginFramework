@@ -106,6 +106,9 @@ public class TPFNodeRepository {
                 }
             }
 
+
+            System.out.println("\tParams: " + Arrays.toString(params));
+
             try {
                 System.out.println("Wanted class: " + wantedClass.getCanonicalName());
                 System.out.println(Arrays.toString(params));
@@ -155,142 +158,6 @@ public class TPFNodeRepository {
 
         return null;
     }
-
-
-    /*
-    //This should also be the class that reads the META-INF and generates the tree.
-    public void generateNodesAndResources(){
-
-        this.metadataFile.printMetadatFile();
-        try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/createorder.txt")) {
-            if (is != null) {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-                List<String> lines = reader.lines().toList();
-
-                for(String line : lines){
-                    int start = line.indexOf('(');
-                    int end = line.indexOf(')');
-                    String classToBeCreated = line.substring(0, start);
-                    String parameterParts = line.substring(start+1,end);
-                    String[] parameters;
-                    if (parameterParts.isBlank()) {
-                        parameters = new String[0];
-                    } else {
-                        parameters = Arrays.stream(parameterParts.split(","))
-                                .map(String::trim)
-                                .toArray(String[]::new);
-                    }
-
-                    Class<?> clazz = Class.forName(classToBeCreated);
-                    Class<?>[] classParameters = new Class<?>[parameters.length];
-                    for(int i = 0; i<parameters.length;i++){
-                        classParameters[i] = Class.forName(parameters[i]);
-                    }
-
-                    Constructor<?> correctConstructor = findMatchingConstructor(clazz,classParameters);
-                    if(correctConstructor == null){
-                        continue;
-                    }
-
-                    ClassMetadata classMetadata = metadataFile.classes.get(classToBeCreated);
-                    Object[] needed_parameters = new Object[correctConstructor.getParameterCount()];
-                    Parameter[] constructorParameters = correctConstructor.getParameters();
-
-
-                    System.out.println("Current Class: " + classToBeCreated);
-                    if(classMetadata != null) {
-                        for (int i = 0; i < needed_parameters.length; i++) {
-                            Parameter current = constructorParameters[i];
-
-                            FieldValueInfo inf = classMetadata.parameters.get(current.getName());
-
-                            if (inf == null) {
-                                // Fallback: try to find by type
-                                Class<?> paramType = classParameters[i];
-
-                                List<FieldValueInfo> matching = classMetadata.parameters.values().stream()
-                                        .filter(m -> {
-                                            try {
-                                                return Class.forName(m.type).equals(paramType);
-                                            } catch (ClassNotFoundException e) {
-                                                return false;
-                                            }
-                                        })
-                                        .toList();
-
-                                if (matching.size() == 1) {
-                                    inf = matching.get(0);
-                                } else if (matching.size() > 1) {
-                                    throw new IllegalStateException("Multiple TPFValue parameters match type " + paramType.getName()
-                                            + " for constructor parameter " + current.getName());
-                                }
-                            }
-
-                            // Either matched by name or by type
-                            if (inf != null) {
-                                Class<?> needed_type = Class.forName(inf.type);
-                                Object value = valueRepository.getValue(inf.location, needed_type);
-                                if (value == null) {
-                                    if (inf.defaultValue != null && !inf.defaultValue.isBlank()) {
-                                        value = TPFValueRepository.convertStringToType(inf.defaultValue, needed_type);
-                                    } else {
-                                        throw new IllegalStateException(classToBeCreated + " is missing required value for parameter: " + current.getName());
-                                    }
-                                }
-                                needed_parameters[i] = value;
-                            } else {
-                                Object dep = nodes.get(classParameters[i]);
-                                if (dep == null) {
-                                    throw new IllegalStateException(classToBeCreated + " is missing dependency for constructor parameter: " + current.getName()
-                                            + " of type " + classParameters[i].getName());
-                                }
-                                needed_parameters[i] = dep;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        for(int i = 0; i<needed_parameters.length; i++)
-                        {
-                            Object dep = nodes.get(classParameters[i]);
-                            if (dep == null) {
-                                throw new IllegalStateException("Missing dependency for constructor parameter: " + classParameters[i].getName()
-                                        + " of type " + classParameters[i].getName());
-                            }
-                            needed_parameters[i] = dep;
-                        }
-                    }
-
-                    Object created_obj = correctConstructor.newInstance(needed_parameters);
-                    nodes.put(clazz,created_obj);
-
-                    if(classMetadata != null && created_obj != null){
-                        for(String variableName : classMetadata.fields.keySet()){
-                            FieldValueInfo inf = classMetadata.fields.get(variableName);
-                            Field field = clazz.getDeclaredField(variableName);
-                            Object value = valueRepository.getValue(inf.location, field.getType());
-
-                            field.setAccessible(true);
-                            System.out.println("Set field value: " + variableName);
-                            field.set(created_obj, value);
-                        }
-                    }
-
-                    System.out.println("Creating: " + classToBeCreated +
-                            " with args: " + Arrays.toString(needed_parameters));
-                }
-            }
-        } catch (IOException | InvocationTargetException | InstantiationException | IllegalAccessException |
-                 ClassNotFoundException e) {
-            throw new RuntimeException(e);
-        } catch (NoSuchFieldException e) {
-            throw new RuntimeException(e);
-        }
-
-        System.out.println("Finished creating dependencies");
-    }
-     */
 
     private Constructor<?> findMatchingConstructor(Class<?> clazz, Class<?>... argTypes) {
         for (Constructor<?> ctor : clazz.getConstructors()) {

@@ -21,7 +21,7 @@ public class TestClass {
     //
      //InterfaceTesting test
     @TPFConstructor
-    public TestClass(TestClass2 se, TestClass3 test2, @TPFQualifier(className = "org.treepluginframework.SubClass2") InterfaceTesting t , @TPFValue(location="first_location",defaultValue = "31") int check){
+    public TestClass(TestClass2 se, @TPFQualifier(specifiedClass = TestClass2Extended.class) TestClass2 test2, @TPFQualifier(className = "org.treepluginframework.SubClass2") InterfaceTesting t , @TPFValue(location="first_location",defaultValue = "31") int check){
         this.testClass2 = se;
         this.storedVal = t;
         System.out.println("Im inside testclass and my check value is: " + check);
