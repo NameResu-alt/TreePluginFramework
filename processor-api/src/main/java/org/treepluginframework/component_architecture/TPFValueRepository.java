@@ -1,10 +1,13 @@
 package org.treepluginframework.component_architecture;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.treepluginframework.values.ClassValueMetadata;
+import org.treepluginframework.values.FieldValueInfo;
 import org.treepluginframework.values.TPFMetadataFile;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.*;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -17,6 +20,11 @@ import java.util.Properties;
 public class TPFValueRepository {
     private static final String CONFIG_ENV_VAR = "TPF_CONFIG_PATH";
     private static final String DEFAULT_CONFIG_CLASSPATH = "application.properties";
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+
+    private HashMap<Class<?>,HashMap<String, Field>> cachedFields = new HashMap<>();
+
     private HashMap<String,String> savedValues = new HashMap<>();
     private TPFMetadataFile metaFile;
     /***
@@ -31,6 +39,7 @@ public class TPFValueRepository {
         loadValuesFromDockerSecrets();
         loadConfigFileValues(configFile);
         loadEnvironmentValues();
+        loadFieldCache();
     }
 
     //Need a way to handle .yml/.yaml and .properties.
@@ -44,6 +53,36 @@ public class TPFValueRepository {
         loadValuesFromDockerSecrets();
         loadConfigFileValues(configFile);
         loadEnvironmentValues();
+        loadFieldCache();
+    }
+
+    private void loadFieldCache(){
+        for(String className : metaFile.classes.keySet()){
+
+            Class<?> wantedClass = null;
+            try {
+                wantedClass = Class.forName(className);
+            } catch (ClassNotFoundException e) {
+                throw new RuntimeException(e);
+            }
+
+            ClassValueMetadata data = metaFile.classes.get(className);
+            if(data.fields.isEmpty()) continue;
+
+            HashMap<String, Field> fieldCache = cachedFields.computeIfAbsent(wantedClass,k-> new HashMap<>());
+
+            //System.out.println("Class: " + className);
+            for(String fieldName : data.fields.keySet()){
+                Field neededField = null;
+                try {
+                    neededField = wantedClass.getDeclaredField(fieldName);
+                } catch (NoSuchFieldException e) {
+                    throw new RuntimeException(e);
+                }
+                neededField.setAccessible(true);
+                fieldCache.put(fieldName,neededField);
+            }
+        }
     }
 
     private File findConfigurationFile(){
@@ -239,25 +278,73 @@ public class TPFValueRepository {
         return (savedValues.containsKey(location)) ? convertStringToType(savedValues.get(location),type) : null;
     }
 
+    public void injectFields(Object object){
+        if(object == null) return;
+
+        String className = object.getClass().getCanonicalName();
+        if(!cachedFields.containsKey(object.getClass())){
+            System.out.println("Cached Fields does not have the class " + object.getClass());
+            return;
+        }
+
+        if(!metaFile.classes.containsKey(className)){
+            System.out.println("MetaFile Classes does not contain the class " + className);
+            return;
+        }
+
+        System.out.println("Class made it through: " + className);
+
+        HashMap<String,Field> fields = cachedFields.get(object.getClass());
+
+        System.out.println("Cache: " + fields.keySet());
+
+        //System.out.println("Class Name: " + className);
+        Map<String, FieldValueInfo> wantedFields = metaFile.classes.get(className).fields;
+        for(String varName : fields.keySet()){
+            Field f = fields.get(varName);
+            FieldValueInfo annotationsInfo = wantedFields.get(varName);
+            System.out.println(varName + " " + annotationsInfo);
+            Object neededValue = getValue(annotationsInfo.location,f.getType());
+
+            if(neededValue == null){
+                neededValue = convertStringToType(annotationsInfo.defaultValue, f.getType());
+            }
+
+            try {
+                f.set(object,neededValue);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public static <T> T convertStringToType(String value, Class<T> type) {
         if (value == null) return null;
 
         try {
             if (type == String.class) return (T) value;
-            if (type == Integer.class) return (T) Integer.valueOf(value);
-            if (type == Long.class) return (T) Long.valueOf(value);
-            if (type == Double.class) return (T) Double.valueOf(value);
-            if (type == Float.class) return (T) Float.valueOf(value);
-            if (type == Boolean.class) return (T) Boolean.valueOf(value);
-            if (type == Short.class) return (T) Short.valueOf(value);
-            if (type == Byte.class) return (T) Byte.valueOf(value);
-            // Add custom converters as needed
+            if (type == Integer.class || type == int.class) return (T) Integer.valueOf(value);
+            if (type == Long.class || type == long.class) return (T) Long.valueOf(value);
+            if (type == Double.class || type == double.class) return (T) Double.valueOf(value);
+            if (type == Float.class || type == float.class) return (T) Float.valueOf(value);
+            if (type == Boolean.class || type == boolean.class) return (T) Boolean.valueOf(value);
+            if (type == Short.class || type == short.class) return (T) Short.valueOf(value);
+            if (type == Byte.class || type == byte.class) return (T) Byte.valueOf(value);
 
-            throw new IllegalArgumentException("Unsupported type: " + type);
+            // Optional: Handle char and Character
+            if (type == Character.class || type == char.class) {
+                if (value.length() != 1) throw new IllegalArgumentException("Expected single character");
+                return (T) Character.valueOf(value.charAt(0));
+            }
+
+            // Fall back to JSON deserialization for custom types
+            return OBJECT_MAPPER.readValue(value, type);
+
         } catch (Exception e) {
             throw new RuntimeException("Failed to convert value '" + value + "' to type " + type.getSimpleName(), e);
         }
     }
+
 
 }

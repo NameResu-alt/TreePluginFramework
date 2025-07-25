@@ -1,5 +1,6 @@
 package org.treepluginframework;
 
+
 import org.treepluginframework.component_architecture.TPF;
 
 public class Main {
@@ -15,5 +16,10 @@ public class Main {
         //System.out.println("Hello, you here?!");
         //newTPF.start();
         //newTPF.testMetaINF();
+        NotTPFClass lol = new NotTPFClass();
+        newTPF.injectValues(lol);
+        System.out.println("Whats the val?: " + lol.checking);
+        System.out.println("Whats the Number val?: " + lol.numberVal);
+
     }
 }

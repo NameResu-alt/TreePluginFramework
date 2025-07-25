@@ -1,21 +1,21 @@
 package org.treepluginframework.preprocessors.nodes;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.auto.service.AutoService;
+import org.checkerframework.checker.units.qual.C;
 import org.treepluginframework.annotations.*;
-import org.treepluginframework.values.ClassMetadata;
-import org.treepluginframework.values.MemberValueInfo;
-import org.treepluginframework.values.TPFMetadataFile;
+import org.treepluginframework.component_architecture.TPF;
+import org.treepluginframework.values.*;
 
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
-import javax.lang.model.type.MirroredTypeException;
-import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.*;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.Writer;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class TPFNodeProcessor extends AbstractProcessor {
     private Filer filer;
-
+    private int count = 0;
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
@@ -34,573 +34,141 @@ public class TPFNodeProcessor extends AbstractProcessor {
     //Make sure that a TPFNode can't also be marked as a resource.
     @Override
     public Set<String> getSupportedAnnotationTypes(){
-        return Set.of("org.treepluginframework.annotations.TPFNode","org.treepluginframework.annotations.TPFResource","org.treepluginframework.annotations.TPFConstructor","org.treepluginframework.annotations.TPFValue");
+        return Set.of("org.treepluginframework.annotations.TPFConstructor","org.treepluginframework.annotations.TPFNode","org.treepluginframework.annotations.TPFResource","org.treepluginframework.annotations.TPFValue","org.treepluginframework.annotations.TPFPrimary","org.treepluginframework.annotations.TPFQualifier");
     }
 
-    @Override
-    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+    private boolean preventNodeAndResourceAnnotation(List<Element> tpfElements){
+        boolean hasDouble = false;
 
+        Set<Element> seen = new HashSet<>();
+        Set<Element> duplicates = new HashSet<>();
 
-        HashMap<TypeElement, ExecutableElement> constructors = new HashMap<>();
-        handleTPFConstructor(constructors, roundEnv);
-        //By this point, I know all the classes that are annotated with TPFConstructor.
-        //Any other class could potentially not have it, so I still need to search.
-
-        List<Element> tpfComponents = new ArrayList<>();
-        tpfComponents.addAll(roundEnv.getElementsAnnotatedWith(TPFNode.class));
-        tpfComponents.addAll(roundEnv.getElementsAnnotatedWith(TPFResource.class));
-        HashMap<String, TypeElement> aliases = new HashMap<>();
-
-        handleAliases(tpfComponents, aliases);
-
-        HashMap<TypeElement, ExecutableElement> classConstructors = new HashMap<>();
-        HashMap<TypeElement, List<TypeElement>> adjacencyList = new HashMap<>();
-
-        TPFMetadataFile tpf_value_file = new TPFMetadataFile();
-
-        if(!tpfComponents.isEmpty()){
-            for(Element elem : tpfComponents){
-                //For each class, find what the correct constructor for it should be.
-                classConstructors.computeIfAbsent((TypeElement) elem, this::findCorrectConstructorOfType);
+        for(Element item : tpfElements){
+            if(!seen.add(item)){
+                duplicates.add(item);
+                TypeElement clazz = (TypeElement) item;
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,clazz.getQualifiedName() + " cannot have both the TPFNode and TPFResource annotations.",item);
+                hasDouble = true;
             }
-
-            //Now I need to go through all the constructors, and figure out what TPFQualifier goes to, or what TPFPrimary goes to
-            for(TypeElement classOfConstructor : classConstructors.keySet()){
-                ExecutableElement constructor = classConstructors.get(classOfConstructor);
-                //Adjacency list is how I find out about cycles, and it needs to be part of this.
-                if(constructor == null) {
-                    adjacencyList.put(classOfConstructor, new ArrayList<>());
-                    continue;
-                }
-
-                List<? extends VariableElement> parameters = constructor.getParameters();
-                if(!parameters.isEmpty())
-                {
-                    ClassMetadata clazz = new ClassMetadata();
-                    for(VariableElement variable : parameters){
-                        TypeMirror typeMirror = variable.asType();
-
-                        // Check if it's primitive, can't take those in.
-                        if (typeMirror.getKind().isPrimitive()) {
-
-                            String wrapper = switch (typeMirror.getKind()) {
-                                case BOOLEAN -> "java.lang.Boolean";
-                                case BYTE    -> "java.lang.Byte";
-                                case SHORT   -> "java.lang.Short";
-                                case INT     -> "java.lang.Integer";
-                                case LONG    -> "java.lang.Long";
-                                case CHAR    -> "java.lang.Character";
-                                case FLOAT   -> "java.lang.Float";
-                                case DOUBLE  -> "java.lang.Double";
-                                default      -> "corresponding wrapper class"; // fallback
-                            };
-
-                            processingEnv.getMessager().printMessage(
-                                    Diagnostic.Kind.ERROR,
-                                    "Cannot take in primitives in the constructor. Use the wrapper class alternative instead, such as " + wrapper + ".",
-                                    variable
-                            );
-                            continue;
-                        }
-
-
-                        // Get the Element representing the type
-                        Element typeElement = processingEnv.getTypeUtils().asElement(typeMirror);
-                        if (!(typeElement instanceof TypeElement)) {
-                            // This might be an array, wildcard, etc.
-                            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"Not a class type, skipping", variable);
-                            continue;
-                        }
-
-
-                        TypeElement type = (TypeElement) typeElement;
-
-                        if(variable.getAnnotation(TPFValue.class) != null){
-                            TPFValue value = variable.getAnnotation(TPFValue.class);
-                            clazz.parameters.put(variable.getSimpleName().toString(), new MemberValueInfo(type.getQualifiedName().toString(), value.location(), value.defaultValue()));
-                        }
-
-                        if (classOfConstructor.equals(type)) {
-                            processingEnv.getMessager().printMessage(
-                                    Diagnostic.Kind.ERROR,
-                                    "Class cannot depend on itself in constructor: " + classOfConstructor.getQualifiedName(),
-                                    variable
-                            );
-                            continue;
-                        }
-
-                        Set<Modifier> modifiers = type.getModifiers();
-
-                        boolean isInterface = type.getKind() == ElementKind.INTERFACE;
-                        boolean isAbstract = modifiers.contains(Modifier.ABSTRACT);
-
-                        TPFQualifier qualifierAnnotation = variable.getAnnotation(TPFQualifier.class);
-
-                        TypeElement properClassType = null;
-                        if(qualifierAnnotation != null){
-                            properClassType = handleTPFQualifier(qualifierAnnotation, classOfConstructor, type, variable, aliases);
-                        }
-                        else
-                        {
-                            if(isInterface){
-                                Types typeUtils = processingEnv.getTypeUtils();
-                                List<TypeElement> potentialCandidates = new ArrayList<>();
-                                List<TypeElement> primaryCandidates = new ArrayList<>();
-                                for (Element candidateElement : tpfComponents) {
-                                    if (!(candidateElement instanceof TypeElement candidateType)) continue;
-                                    if (candidateType.getKind() != ElementKind.CLASS) continue;
-
-                                    if (typeUtils.isAssignable(candidateType.asType(), variable.asType())) {
-                                        if (candidateElement.getAnnotation(TPFPrimary.class) != null) {
-                                            primaryCandidates.add(candidateType);
-                                        } else {
-                                            potentialCandidates.add(candidateType);
-                                        }
-                                        System.out.println("Found implementor: " + candidateType.getQualifiedName());
-                                    }
-                                }
-
-                                if (!primaryCandidates.isEmpty()) {
-                                    if (primaryCandidates.size() > 1) {
-                                        StringBuilder errorMsg = new StringBuilder(classOfConstructor.getQualifiedName() + " is ambiguous due to multiple @TPFPrimary classes: ");
-                                        for (TypeElement candidate : primaryCandidates) {
-                                            errorMsg.append(candidate.getQualifiedName()).append(", ");
-                                        }
-                                        // Remove trailing comma and space safely
-                                        if (errorMsg.length() > 2) errorMsg.setLength(errorMsg.length() - 2);
-                                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, errorMsg.toString(), variable);
-                                    } else {
-                                        properClassType = primaryCandidates.get(0);
-                                    }
-                                } else if (!potentialCandidates.isEmpty()) {
-                                    if (potentialCandidates.size() > 1) {
-                                        StringBuilder errorMsg = new StringBuilder(classOfConstructor.getQualifiedName() + " is ambiguous, annotate a class with @TPFPrimary or annotate variable with @TPFQualifier to disambiguate: ");
-                                        for (TypeElement candidate : potentialCandidates) {
-                                            errorMsg.append(candidate.getQualifiedName()).append(", ");
-                                        }
-                                        if (errorMsg.length() > 2) errorMsg.setLength(errorMsg.length() - 2);
-                                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, errorMsg.toString(), variable);
-                                    } else {
-                                        properClassType = potentialCandidates.get(0);
-                                    }
-                                } else {
-                                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, classOfConstructor.getQualifiedName() + " has no valid implementations found", variable);
-                                }
-                            }
-                            else if(isAbstract){
-                                Types typeUtils = processingEnv.getTypeUtils();
-                                List<TypeElement> potentialCandidates = new ArrayList<>();
-                                List<TypeElement> primaryCandidates = new ArrayList<>();
-
-                                for (Element candidateElement : tpfComponents) {
-                                    if (!(candidateElement instanceof TypeElement candidateType)) continue;
-                                    if (candidateType.getKind() != ElementKind.CLASS) continue;
-
-                                    // Check if candidateType extends the abstract class (directly or indirectly)
-                                    if (typeUtils.isAssignable(candidateType.asType(), type.asType())) {
-                                        if (candidateType.getAnnotation(TPFPrimary.class) != null) {
-                                            primaryCandidates.add(candidateType);
-                                        } else {
-                                            potentialCandidates.add(candidateType);
-                                        }
-                                        System.out.println("Found subclass: " + candidateType.getQualifiedName());
-                                    }
-                                }
-
-                                if (!primaryCandidates.isEmpty()) {
-                                    if (primaryCandidates.size() > 1) {
-                                        StringBuilder errorMsg = new StringBuilder(classOfConstructor.getQualifiedName() + " is ambiguous due to multiple @TPFPrimary classes extending the abstract class: ");
-                                        for (TypeElement candidate : primaryCandidates) {
-                                            errorMsg.append(candidate.getQualifiedName()).append(", ");
-                                        }
-                                        if (errorMsg.length() > 2) errorMsg.setLength(errorMsg.length() - 2);
-                                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, errorMsg.toString(), variable);
-                                    } else {
-                                        properClassType = primaryCandidates.get(0);
-                                    }
-                                } else if (!potentialCandidates.isEmpty()) {
-                                    if (potentialCandidates.size() > 1) {
-                                        StringBuilder errorMsg = new StringBuilder(classOfConstructor.getQualifiedName() + " is ambiguous, annotate a class with @TPFPrimary or annotate variable with @TPFQualifier to disambiguate: ");
-                                        for (TypeElement candidate : potentialCandidates) {
-                                            errorMsg.append(candidate.getQualifiedName()).append(", ");
-                                        }
-                                        if (errorMsg.length() > 2) errorMsg.setLength(errorMsg.length() - 2);
-                                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, errorMsg.toString(), variable);
-                                    } else {
-                                        properClassType = potentialCandidates.get(0);
-                                    }
-                                } else {
-                                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, classOfConstructor.getQualifiedName() + " has no valid subclasses found", variable);
-                                }
-
-                            }
-                            else
-                            {
-                                properClassType = type;
-                            }
-                        }
-
-                        if(properClassType != null){
-
-                            if(properClassType.getAnnotation(TPFNode.class) == null && properClassType.getAnnotation(TPFResource.class) == null && variable.getAnnotation(TPFValue.class) == null)
-                            {
-                                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"The expected class: " + properClassType.getQualifiedName() + " is not annotated with TPFNode, nor TPFResource. The variable isn't annotated with TPFValue either.", variable);
-                            }
-
-                            adjacencyList.computeIfAbsent(classOfConstructor, k -> new ArrayList<>()).add(properClassType);
-                        }
-
-                    }
-
-                    //Handle the TPFValues here.
-                    // Create example class metadata
-                    if(!clazz.isEmpty())
-                        tpf_value_file.classes.put(classOfConstructor.getQualifiedName().toString(), clazz);
-                }
-                else
-                {
-                    adjacencyList.computeIfAbsent(classOfConstructor,k->new ArrayList<>());
-                }
-
-            }
-
-
-            if(!adjacencyList.isEmpty()){
-                HashMap<String,List<String>> convert = new HashMap<>();
-                for(TypeElement parent : adjacencyList.keySet()){
-                    List<TypeElement> children = adjacencyList.get(parent);
-
-                    List<String> conv = new ArrayList<>();
-                    for(TypeElement child : children){
-                        conv.add(child.getQualifiedName().toString());
-                    }
-
-                    convert.put(parent.getQualifiedName().toString(), conv);
-                    String print = parent.getQualifiedName()+":";
-                    print += children.stream()
-                            .map(p->p.getQualifiedName().toString())
-                            .collect(Collectors.joining(","));
-                    System.out.println(print+"\n");
-                }
-
-
-                TopologicalSort.SortResult result = TopologicalSort.kahnTopologicalSort(adjacencyList);
-                //TopologicalSort.StringSortResult result = TopologicalSort.kahnTopologicalSortString(convert);
-                if (result.sortedList == null) {
-                    StringBuilder cycleMsg = new StringBuilder("Cycle detected in dependencies between:\n");
-
-                    for (TypeElement elem : result.cycleNodes) {
-                        cycleMsg.append(" - ").append(elem.getQualifiedName()).append("\n");
-                    }
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, cycleMsg.toString());
-                }
-                else
-                {
-                    Collections.reverse(result.sortedList);
-                    try {
-                        FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "","META-INF/tpf/createorder.txt");
-                        try (Writer writer = file.openWriter()) {
-                            result.sortedList.removeIf(elem -> !adjacencyList.containsKey(elem));
-
-                            for(TypeElement elem : result.sortedList){
-                                List<TypeElement> parameters = adjacencyList.get(elem);
-
-                                if(!parameters.isEmpty()){
-                                    String paramList = parameters.stream()
-                                            .map(p->p.getQualifiedName().toString())
-                                            .collect(Collectors.joining(","));
-                                    writer.write(elem.getQualifiedName()+"("+paramList+")\n");
-                                }
-                                else
-                                {
-                                    writer.write(elem.getQualifiedName()+"()\n");
-                                }
-
-                            }
-                        } catch (IOException e) {
-                            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Failed to write META-INF file: " + e.getMessage());
-                        }
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            }
-
         }
 
-        /*
-        System.out.println("What First?!");
-        tpf_value_file.printMetadatFile();
+        return hasDouble;
+    }
 
-
-        System.out.println("What Second?!");
-        tpf_value_file.printMetadatFile();
-        */
-
-        Set<? extends Element> valueElements = roundEnv.getElementsAnnotatedWith(TPFValue.class);
-        if(!valueElements.isEmpty())
-        {
-            for(Element element : valueElements){
-                //The code above should have already handled anything that was parameters.
-                //Now I need to deal with whatever fields there are.
-
-                VariableElement field = (VariableElement) element;
-                //Qualified_Class_Name:Field_Name<Field_Location:Default_Value>
-                TPFValue annotation = field.getAnnotation(TPFValue.class);
-                if(annotation.location().isEmpty()){
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"TPFValue annotation does not have a location",element);
-                }
-
-                TypeMirror type = field.asType();
+    private String getQualifiedTypeName(TypeMirror type, Types typeUtils) {
+        switch (type.getKind()) {
+            case DECLARED -> {
+                // Regular object type
+                TypeElement typeElement = (TypeElement) ((DeclaredType) type).asElement();
+                return typeElement.getQualifiedName().toString();
+            }
+            case ARRAY -> {
+                // Handle array types recursively
+                ArrayType arrayType = (ArrayType) type;
+                return getQualifiedTypeName(arrayType.getComponentType(), typeUtils) + "[]";
+            }
+            default -> {
+                return type.toString();
+                /*
                 if (type.getKind().isPrimitive()) {
-                    processingEnv.getMessager().printMessage(
-                            Diagnostic.Kind.ERROR,
-                            "TPFValue annotations can't use primitives as values. Use the wrapper classes instead.",
-                            element
-                    );
-                    continue;
+                    // Use boxed type if needed
+                    TypeElement boxed = typeUtils.boxedClass((PrimitiveType) type);
+                    return boxed.getQualifiedName().toString(); // use `type.toString()` if you want raw primitive name
+                } else {
+                    return type.toString(); // fallback (wildcards, type vars, etc.)
                 }
-
-                Element variableElement = processingEnv.getTypeUtils().asElement(field.asType());
-                TypeElement typeElement = (TypeElement) variableElement;
-                if(element.getKind() == ElementKind.PARAMETER) continue;
-
-                TypeElement classOfElement = (TypeElement) element.getEnclosingElement();
-                ClassMetadata metadata = tpf_value_file.classes.getOrDefault(classOfElement.getQualifiedName().toString(), new ClassMetadata());
-                metadata.fields.put(field.getSimpleName().toString(), new MemberValueInfo(typeElement.getQualifiedName().toString(), annotation.location(), annotation.defaultValue()));
-                tpf_value_file.classes.put(classOfElement.getQualifiedName().toString(), metadata);
+                */
             }
         }
-
-        if(!tpf_value_file.isEmpty()){
-
-            //Loop through all of the classes. Then, I need to see their parameters, and see what type their TPFValue has.
-            //If I find out that two different classes have the same location, but different value types, then throw an error.
-            //tpf_value_file.printMetadatFile();
-            HashSet<String> locations = new HashSet<>();
-            for(String c : tpf_value_file.classes.keySet()){
-                ClassMetadata meta = tpf_value_file.classes.get(c);
-
-
-                for(String fieldName : meta.fields.keySet()){
-                    MemberValueInfo info = meta.fields.get(fieldName);
-                    locations.add(info.location);
-                }
-
-                for(String parameterName : meta.parameters.keySet()){
-                    MemberValueInfo info = meta.parameters.get(parameterName);
-                    locations.add(info.location);
-                }
-            }
-
-            tpf_value_file.locations = locations;
-
-            try {
-                // Create resource file under META-INF/tpf/
-                FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/values.json");
-                try (Writer writer = file.openWriter()) {
-                    // Serialize your object to JSON string (using Jackson or Gson)
-                    ObjectMapper mapper = new ObjectMapper();
-                    String jsonString = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(tpf_value_file);
-
-                    // Write JSON string to the file
-                    writer.write(jsonString);
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-                // handle or propagate error as appropriate
-            }
-        }
-
-
-
-        return true;
     }
 
-    private TypeElement handleTPFQualifier(TPFQualifier qualifierAnnotation, TypeElement classOfConstructor, TypeElement variableType, VariableElement variable, HashMap<String,TypeElement> aliases){
-        //Check whatever the qualifier is against the type.
-        // Try to get the TypeMirror from the specifiedClass safely
-        TypeMirror specifiedType = null;
-        try {
-            qualifierAnnotation.specifiedClass(); // This line is only to trigger the exception
-        } catch (MirroredTypeException e) {
-            specifiedType = e.getTypeMirror();
-        }
 
-        // Determine if the specified class was left as the default Void.class
-        boolean isVoid = specifiedType != null && specifiedType.toString().equals("java.lang.Void");
+    //Constructor can see if this method already handled it for that class, and just skip that parameter.
+    //The errorOccurred stuff is just so that all bad TPFValue annotations are taken care of immediately.
+    private boolean handleTPFValue(HashMap<TypeElement, ClassValueMetadata> allClassData, Set<VariableElement> usedVariables, Set<String> configLocations, RoundEnvironment roundEnv){
+        //Check the values first, and translate if necessary.
+        //I store an executable hashmap?
+        List<Element> valueVariables = new ArrayList<>(roundEnv.getElementsAnnotatedWith(TPFValue.class));
+        boolean errorOccurred = false;
+        if(!valueVariables.isEmpty()){
+            HashMap<ExecutableElement, String> constructorSignatures = new HashMap<>();
 
-        if (isVoid && qualifierAnnotation.className().isEmpty()) {
-            processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "TPFQualifier must use either specifiedClass, or className field",
-                    variable
-            );
-            return null;
-        }
+            for(Element elem : valueVariables) {
+                boolean isParameter = (elem.getEnclosingElement().getKind() == ElementKind.CONSTRUCTOR);
+                VariableElement variableElement = (VariableElement) elem;
+                TypeMirror varType = variableElement.asType();
 
-        if(!isVoid && !qualifierAnnotation.className().isEmpty()){
-            processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR,
-                    "TPFQualifier must use either specifiedClass, or className field",
-                    variable
-            );
-            return null;
-        }
-
-        TypeElement correspondingClass = null;
-        System.out.println("Hello world, what's going on?!");
-
-        if(!isVoid){
-            //One to one match.
-            TypeMirror classTypeMirror = null;
-            try {
-                Class<?> clazz = qualifierAnnotation.specifiedClass(); // This will throw
-            } catch (MirroredTypeException e) {
-                classTypeMirror = e.getTypeMirror();
-            }
-            Element element = processingEnv.getTypeUtils().asElement(classTypeMirror);
-            if (element instanceof TypeElement correctType) {
-                // You now have the TypeElement representing the class from the annotation
-                correspondingClass = correctType;
-            }
-        }
-        else {
-            String aliasOrClass = qualifierAnnotation.className();
-            if (aliases.containsKey(aliasOrClass))
-            {
-                correspondingClass = aliases.get(aliasOrClass);
-            }
-            else
-            {
-                // Attempt to resolve it as a fully qualified class name
-                correspondingClass = processingEnv.getElementUtils().getTypeElement(aliasOrClass);
-
-                if (correspondingClass == null) {
-                    // Not found — report an error
-                    processingEnv.getMessager().printMessage(
-                            Diagnostic.Kind.ERROR,
-                            "Could not resolve class for className: " + aliasOrClass,
-                            variable
-                    );
-                    return null;
+                Element current = variableElement;
+                while (current != null && !(current.getKind().isClass() || current.getKind().isInterface())) {
+                    current = current.getEnclosingElement();
                 }
-            }
-        }
+                TypeElement owningClass = (TypeElement) current;
+                System.out.println("TPFValue in class " + owningClass.getQualifiedName());
 
-        //Make sure that correspondingClass is not an interface, and it's not an abstract class.
-        if(correspondingClass == null){
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"Unable to parse the class TPFQualifier is searching for", variable);
-            return null;
-        }
-
-        boolean correspondingIsInterface = correspondingClass.getKind() == ElementKind.INTERFACE;
-        boolean correspondingIsAbstract = correspondingClass.getModifiers().contains(Modifier.ABSTRACT);
-
-        if(correspondingIsAbstract || correspondingIsInterface)
-        {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"Specified class in TPFQualifier: " + correspondingClass.getQualifiedName() + " must be a concrete class. Cannot be abstract nor interface", variable);
-            return null;
-        }
+                ClassValueMetadata classData = allClassData.computeIfAbsent(owningClass, k -> new ClassValueMetadata());
+                TPFValue valueAnnotation = variableElement.getAnnotation(TPFValue.class);
 
 
-
-        Types typeUtils = processingEnv.getTypeUtils();
-        TypeMirror expectedType = variableType.asType();                // Interface or abstract class
-        TypeMirror actualType = correspondingClass.asType();    // Concrete class to check
-
-
-        if (variableType.getKind() == ElementKind.INTERFACE) {
-            // Check if correspondingClass implements the interface
-            if (!typeUtils.isAssignable(actualType, expectedType)) {
-                processingEnv.getMessager().printMessage(
-                        Diagnostic.Kind.ERROR,
-                        "Class " + correspondingClass.getQualifiedName() +
-                                " does not implement interface " + variableType.getQualifiedName(),
-                        variable
-                );
-                return null;
-            }
-        } else{
-            // Check if correspondingClass extends the abstract class
-            if (!typeUtils.isAssignable(actualType, expectedType)) {
-                processingEnv.getMessager().printMessage(
-                        Diagnostic.Kind.ERROR,
-                        "Class " + correspondingClass.getQualifiedName() +
-                                " does not extend class " + variableType.getQualifiedName(),
-                        variable
-                );
-                return null;
-            }
-        }
-
-        return correspondingClass;
-    }
-
-    private ExecutableElement findCorrectConstructorOfType(TypeElement tpfComponent){
-        //It's ok if there's no constructor, just throw a warning about that.
-        List<ExecutableElement> potentialConstructors = new ArrayList<>();
-        for(Element enclosed : tpfComponent.getEnclosedElements()){
-            if(enclosed.getKind() != ElementKind.CONSTRUCTOR) continue;
-            //Constructor with arguments takes priority over constructor without arguments.
-            ExecutableElement constructor = (ExecutableElement) enclosed;
-
-            boolean hasParameters = !constructor.getParameters().isEmpty();
-            if(potentialConstructors.isEmpty()){
-                potentialConstructors.add(constructor);
-            }
-            else {
-                boolean topHasParameters = !potentialConstructors.getFirst().getParameters().isEmpty();
-                if (!topHasParameters && hasParameters) {
-                    potentialConstructors.clear();
-                    potentialConstructors.add(constructor);
+                if(valueAnnotation.location().isEmpty() || valueAnnotation.location().isBlank()){
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "TPFValue annotations must provide a location", elem);
+                    errorOccurred = true;
                 }
-                else if(topHasParameters && hasParameters)
+
+                String type = getQualifiedTypeName(varType, processingEnv.getTypeUtils());
+
+                System.out.println(owningClass.getQualifiedName() + ": " + variableElement.getSimpleName() + " IsParameter: " + isParameter);
+                if(isParameter){
+                    //I need to get the Method signature of this executable.
+                    ExecutableElement constructor = (ExecutableElement) variableElement.getEnclosingElement();
+                    if(!constructorSignatures.containsKey(constructor))
+                    {
+                        String constructorSig = constructorSignatures.computeIfAbsent(constructor, c ->
+                                c.getParameters().stream()
+                                        .map(param -> "(" + param.asType().toString() + ")")
+                                        .collect(Collectors.joining(",", "[", "]"))
+                        );
+                        constructorSignatures.put(constructor, constructorSig);
+                    }
+
+                    String constructorSig = constructorSignatures.get(constructor);
+                    List<ParameterValueInfo> paramInfo = classData.parameters.computeIfAbsent(constructorSig, k -> new ArrayList<>());
+
+                    List<? extends VariableElement> params = constructor.getParameters();
+
+                    // Find the index of the parameter in the constructor's parameter list
+                    int positionInConstructor = -1;
+                    for (int i = 0; i < params.size(); i++) {
+                        if (params.get(i).equals(variableElement)) {
+                            positionInConstructor = i;
+                            break;
+                        }
+                    }
+
+                    paramInfo.add(new ParameterValueInfo(type, valueAnnotation.location(), valueAnnotation.defaultValue(), positionInConstructor));
+                }
+                else
                 {
-                    potentialConstructors.add(constructor);
+                    classData.fields.put(variableElement.getSimpleName().toString(), new FieldValueInfo(type, valueAnnotation.location(), valueAnnotation.defaultValue()));
                 }
+                configLocations.add(valueAnnotation.location());
+                usedVariables.add(variableElement);
             }
         }
 
-        System.out.println(tpfComponent.getQualifiedName() + " Potential: " + potentialConstructors);
-        if(potentialConstructors.size() > 1){
-            //Too many potential constructors, one needs the @TPFConstructor annotation.
-            //Also gave priority to constructors with parameters over ones that don't.
-            for(ExecutableElement potentialConstructor : potentialConstructors){
-                TypeElement parentClass = (TypeElement) potentialConstructor.getEnclosingElement();
-
-                String paramList = potentialConstructor.getParameters().stream()
-                        .map(p -> p.asType().toString())
-                        .collect(Collectors.joining(", "));
-
-                processingEnv.getMessager().printMessage(
-                        Diagnostic.Kind.ERROR,
-                        "Ambiguous constructor: " + parentClass.getQualifiedName() + "(" + paramList + "). Use @TPFConstructor to disambiguate.",
-                        potentialConstructor
-                );
-            }
-        }
-        else if(!potentialConstructors.isEmpty()){
-            return potentialConstructors.getFirst();
-        }
-
-        return null;
+        return errorOccurred;
     }
 
     private boolean handleAliases(List<Element> tpfComponents, HashMap<String,TypeElement> aliases){
         HashMap<String,List<TypeElement>> aliasVerify = new HashMap<>();
+        boolean errorOccurred = false;
         for(Element element : tpfComponents)
         {
             TypeElement tpfComponent = (TypeElement) element;
 
             TPFNode tpfNodeAnnotation = tpfComponent.getAnnotation(TPFNode.class);
             TPFResource tpfResourceAnnotation = tpfComponent.getAnnotation(TPFResource.class);
+            //I already handled the case where a node is both a node and a resource, so no need to check for both here.
 
-            if(tpfNodeAnnotation != null && tpfResourceAnnotation != null){
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "A class cannot have both the @TPFNode annotation and the @TPFResource.",tpfComponent);
-            }
-
-            //Get the alias
             String alias = (tpfNodeAnnotation != null) ? tpfNodeAnnotation.alias() : tpfResourceAnnotation.alias();
 
             //Making it case-insensitive, don't want to deal with that bug
@@ -611,13 +179,12 @@ public class TPFNodeProcessor extends AbstractProcessor {
             }
         }
 
-        boolean failed = false;
         for(String key : aliasVerify.keySet()){
             List<TypeElement> potential = aliasVerify.get(key);
             if(potential.size() > 1){
                 for(TypeElement t : potential){
                     processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "The class " + t.getQualifiedName() + " has the same alias as another class: " + key, t);
-                    failed = true;
+                    errorOccurred = true;
                 }
             }
             else
@@ -626,114 +193,504 @@ public class TPFNodeProcessor extends AbstractProcessor {
             }
         }
 
-        if(!failed){
-            if(!aliases.isEmpty()){
-                try {
-                    FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "","META-INF/tpf/aliases.txt");
-                    try (Writer writer = file.openWriter()) {
-                        for(String alias : aliases.keySet()){
-                            TypeElement type = aliases.get(alias);
-                            writer.write(alias+":"+type.getQualifiedName()+"\n");
-                        }
-                    } catch (IOException e) {
-                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Failed to write META-INF file: " + e.getMessage());
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+        return errorOccurred;
+    }
+
+    private boolean handleTPFQualifier(HashMap<String,TypeElement> aliases, HashMap<VariableElement, TypeElement> qualifierClassTranslations,RoundEnvironment round){
+        boolean errorOccurred = false;
+        Set<? extends Element> qualifiers = round.getElementsAnnotatedWith(TPFQualifier.class);
+
+        if(qualifiers.isEmpty()) return false;
+
+        for(Element elem : qualifiers){
+            VariableElement variableElement = (VariableElement) elem;
+            TypeMirror varType = variableElement.asType();
+
+            if(varType.getKind().isPrimitive()){
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"TPFQualifier cannot be used on variables with primitive types", elem);
+                errorOccurred = true;
+                continue;
+            }
+
+            TypeElement variableType = (TypeElement) processingEnv.getTypeUtils().asElement(varType);
+
+
+
+            //I can guard against primitives immediately, but I can't guard against abstract classes nor interfaces immediately.
+
+            /*
+            Element current = variableElement;
+            while (current != null && !(current.getKind().isClass() || current.getKind().isInterface())) {
+                current = current.getEnclosingElement();
+            }
+            TypeElement owningClass = (TypeElement) current;
+            */
+
+            TPFQualifier qualifierAnnotation = variableElement.getAnnotation(TPFQualifier.class);
+            //Make sure that the types that are present are compatible with each other.
+            //If they aren't throw a problem.
+
+            // Check if the specified class is Void.class
+            TypeMirror voidType = processingEnv.getElementUtils()
+                    .getTypeElement("java.lang.Void")
+                    .asType();
+
+            TypeMirror specifiedType = null;
+
+            try {
+                // This will always throw at compile-time
+                Class<?> ignored = qualifierAnnotation.specifiedClass();
+            } catch (MirroredTypeException e) {
+                specifiedType = e.getTypeMirror();
+            }
+
+            TypeElement classToCompare = null;
+            if(specifiedType != null && !processingEnv.getTypeUtils().isSameType(specifiedType,voidType)){
+
+                if(specifiedType.getKind().isPrimitive()){
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "The type of desired class cannot be a primitive." + specifiedType.toString(), elem);
+                    errorOccurred = true;
+                    continue;
                 }
+
+                classToCompare = (TypeElement) processingEnv.getTypeUtils().asElement(specifiedType);
+            }
+            else
+            {
+                //Aliases already has it
+                if(aliases.containsKey(qualifierAnnotation.className())){
+                    classToCompare = aliases.get(qualifierAnnotation.className());
+                }
+                else
+                {
+                    //it may be a qualified class name.
+                    classToCompare = processingEnv.getElementUtils().getTypeElement(qualifierAnnotation.className());
+                }
+            }
+
+            if(classToCompare == null){
+                errorOccurred = true;
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Unable to resolve the type TPFQualifier is asking for (Direct:" + specifiedType + " ClassName: " + qualifierAnnotation.className() + ")",elem);
+                continue;
+            }
+
+            if(classToCompare.getAnnotation(TPFNode.class) == null && classToCompare.getAnnotation(TPFResource.class) == null){
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"The class " + classToCompare.getQualifiedName() + " is not annotated with TPFNode nor TPFResource.", variableElement);
+                errorOccurred = true;
+                continue;
+            }
+
+            Set<Modifier> modifiers = classToCompare.getModifiers();
+
+            boolean isInterface = classToCompare.getKind() == ElementKind.INTERFACE;
+            boolean isAbstract = modifiers.contains(Modifier.ABSTRACT);
+
+
+            if(isAbstract){
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Specified class must be a concrete implementation, got Abstract class " + classToCompare.getQualifiedName() + " instead.", elem);
+                errorOccurred = true;
+                continue;
+            }
+            if(isInterface){
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Specified class must be a concrete implementation, got Interface " + classToCompare.getQualifiedName() + " instead.", elem);
+                errorOccurred = true;
+                continue;
+            }
+
+            Types typeUtils = processingEnv.getTypeUtils();
+
+            if (!typeUtils.isAssignable(classToCompare.asType(), variableType.asType())) {
+                // A is a subtype of B (either extends or implements)
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"The desired class " + classToCompare.getQualifiedName() + " is incompatible with " + variableType.getQualifiedName(), elem);
+                errorOccurred = true;
+                continue;
+            }
+
+            //By this point, I know that whatever desired class is compatible.
+            qualifierClassTranslations.put(variableElement, classToCompare);
+        }
+
+        return errorOccurred;
+    }
+
+    private boolean handleTPFConstructors(List<Element> tpfComponents, HashMap<TypeElement, ConstructorInformation> constructorInformation, Set<VariableElement> tpfValueElements, HashMap<VariableElement, TypeElement> qualifierClassTranslations, HashMap<TypeElement, List<TypeElement>> adjacencyList){
+        if(tpfComponents.isEmpty()){
+            return false;
+        }
+
+        boolean errorOccurred = false;
+
+        for(Element elem : tpfComponents){
+            TypeElement clazz = (TypeElement) elem;
+            List<? extends Element> enclosed = clazz.getEnclosedElements();
+            List<ExecutableElement> potentialConstructors = new ArrayList<>();
+
+            List<ExecutableElement> priorityConstructors = new ArrayList<>();
+            ExecutableElement noArgsConstructor = null;
+
+            //First, find the correct constructor
+            for(Element enclosedElement : enclosed)
+            {
+                if(enclosedElement.getKind() != ElementKind.CONSTRUCTOR) continue;
+                if(enclosedElement.getAnnotation(TPFConstructor.class) != null)
+                {
+                    priorityConstructors.add((ExecutableElement) enclosedElement);
+                }
+                else
+                {
+                    ExecutableElement construct = (ExecutableElement) enclosedElement;
+                    potentialConstructors.add(construct);
+
+                    if(construct.getParameters().isEmpty()){
+                        noArgsConstructor = construct;
+                    }
+                }
+            }
+
+            ExecutableElement correctConstructor = null;
+            if(!priorityConstructors.isEmpty()){
+                if(priorityConstructors.size() > 1){
+                    errorOccurred = true;
+                    for(ExecutableElement c : priorityConstructors){
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, clazz.getQualifiedName() + " has more than one constructor marked with TPFConstructor.", c);
+                    }
+                }
+                else
+                {
+                    correctConstructor = priorityConstructors.getFirst();
+                }
+            }
+            else if(!potentialConstructors.isEmpty())
+            {
+                if(noArgsConstructor != null){
+                    correctConstructor = noArgsConstructor;
+                }
+                else if(potentialConstructors.size() > 1)
+                {
+                    errorOccurred = true;
+                    for(ExecutableElement constructor : potentialConstructors){
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, clazz.getQualifiedName() + " has ambiguous constructors. Mark one with TPFConstructor, or include a no-args constructor.", constructor);
+                    }
+                }
+                else
+                {
+                    correctConstructor = potentialConstructors.getFirst();
+                }
+            }
+
+            //If there a correct constructor, verify its parameters.
+            List<TypeElement> dependencies = adjacencyList.computeIfAbsent(clazz, k -> new ArrayList<>());
+            if(correctConstructor != null && !correctConstructor.getParameters().isEmpty()){
+                //If the constructor is empty, there's nothing to do here.
+                if(correctConstructor.getParameters().isEmpty()) continue;
+
+                //At this point, I can use the translations to see what's up.
+                //NeededParameterTypes is going to be used later to figure out info.
+                List<String> neededParameterTypes = new ArrayList<>();
+
+                List<String> desiredParameterTypes = new ArrayList<>();
+                for(VariableElement parameter : correctConstructor.getParameters()){
+                    // Get the type of the parameter as a TypeMirror
+                    TypeMirror paramType = parameter.asType();
+                    // Convert the type to its string representation (e.g. "java.lang.String", "int")
+                    String typeName = paramType.toString();
+                    neededParameterTypes.add(typeName);
+
+                    //TPFValue already handled this variable
+                    //Prevents having to recheck that logic here.
+                    //From this point on, if this parameter is a primitive, call an error.
+                    if(tpfValueElements.contains(parameter)){
+                        desiredParameterTypes.add(typeName);
+                        continue;
+                    }
+
+                    if(paramType.getKind().isPrimitive())
+                    {
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Constructors for TPFNode and TPFResource cannot take primitives without the TPFValue annotation", parameter);
+                        errorOccurred = true;
+                        continue;
+                    }
+
+                     //If TPFQualifier found a translation, just add that to the desired.
+                    if(qualifierClassTranslations.containsKey(parameter))
+                    {
+                        desiredParameterTypes.add(qualifierClassTranslations.get(parameter).getQualifiedName().toString());
+                        dependencies.add(qualifierClassTranslations.get(parameter));
+                        continue;
+                    }
+
+                    TypeElement parameterType = (TypeElement) processingEnv.getTypeUtils().asElement(paramType);
+
+                    //If it didn't, now I manually have to go through and see what I could use instead.
+                    //If ambiguous, throw an error.
+                    boolean isInterface = parameterType.getKind() == ElementKind.INTERFACE;
+                    boolean isAbstract = parameterType.getModifiers().contains(Modifier.ABSTRACT);
+
+                    TypeElement desiredClass = null;
+                    if(!isInterface && !isAbstract){
+                        desiredClass = parameterType;
+                    }
+                    else
+                    {
+                        List<TypeElement> primaryPotentialClasses = new ArrayList<>();
+                        List<TypeElement> potentialClasses = new ArrayList<>();
+
+                        System.out.println("Abstract/Interface found: " + parameterType.getQualifiedName());
+                        for(Element pC : tpfComponents){
+                            //Don't consider yourself as a potential class
+                            if(pC == elem) continue;
+                            TypeElement potentialClass = (TypeElement) pC;
+
+                            //!typeUtils.isAssignable(variableType.asType(), classToCompare.asType()
+                            Types typeUtils = processingEnv.getTypeUtils();
+                            if(typeUtils.isAssignable(potentialClass.asType(), parameterType.asType()))
+                            {
+                                if(potentialClass.getAnnotation(TPFPrimary.class) != null){
+                                    primaryPotentialClasses.add(potentialClass);
+                                }
+                                else
+                                {
+                                    potentialClasses.add(potentialClass);
+                                }
+                            }
+                        }
+
+                        System.out.println("Size of potentials: " + primaryPotentialClasses.size() + " " + potentialClasses.size());
+
+                        if(!primaryPotentialClasses.isEmpty()){
+                            if(primaryPotentialClasses.size() > 1){
+
+                                String errorTypes = primaryPotentialClasses.stream()
+                                        .map(p -> p.getQualifiedName().toString())
+                                        .collect(Collectors.joining(", "));
+
+
+                                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"The type for the class " + parameterType.getQualifiedName().toString() + " is ambiguous since more than one implementation uses TPFPrimary: " + errorTypes, parameter);
+                                errorOccurred = true;
+                                continue;
+                            }
+                            else
+                            {
+                                desiredClass = primaryPotentialClasses.getFirst();
+                            }
+                        }
+                        else if(!potentialClasses.isEmpty()){
+                            if(potentialClasses.size() > 1){
+
+
+                                String errorTypes = potentialClasses.stream()
+                                        .map(p -> p.getQualifiedName().toString())
+                                        .collect(Collectors.joining(", "));
+
+                                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"The type for the class " + parameterType.getQualifiedName() + " is ambiguous. Utilize TPFPrimary or TPFQualifier as needed: " + errorTypes, parameter);
+                                errorOccurred = true;
+                                continue;
+                            }
+                            else
+                            {
+                                desiredClass = potentialClasses.getFirst();
+                            }
+                        }
+                        else
+                        {
+                            //No potential classes.
+                            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "No potential candidates were found for the Abstract/Interface type???? " + parameterType.getQualifiedName().toString() + " Count: " + tpfComponents.size(), parameter);
+                            errorOccurred = true;
+                            continue;
+                        }
+                    }
+
+                    if(desiredClass == null){
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Unable to find a matching class definition for " + parameterType.getQualifiedName(), parameter);
+                        errorOccurred = true;
+                        continue;
+                    }
+
+                    desiredParameterTypes.add(desiredClass.getQualifiedName().toString());
+                    dependencies.add(desiredClass);
+
+                    //Just in case the dependency itself never uses the constructor stuff, so that it doesn't show up null.
+                    //allClassData.computeIfAbsent(desiredClass, k-> new ClassValueMetadata());
+
+                    //Just in case the dependency itself never uses the constructor stuff, make sure to still have it around.
+                    constructorInformation.computeIfAbsent(desiredClass, k->new ConstructorInformation());
+                }
+
+                //Add the dependencies to the class Metadata.
+                ConstructorInformation info = new ConstructorInformation();
+                info.neededConstructorParameters = neededParameterTypes;
+                info.desiredConstructorParameters = desiredParameterTypes;
+                constructorInformation.put(clazz, info);
+            }
+            else
+            {
+                System.out.println("GOD HELP: " + clazz.getQualifiedName());
+                //Even if it has a blank constructor, still give it metadata, since it'll be used for later.
+                constructorInformation.put(clazz, new ConstructorInformation());
             }
         }
 
-        return failed;
+        return errorOccurred;
     }
-    private boolean handleTPFConstructor(HashMap<TypeElement,ExecutableElement> constructors, RoundEnvironment roundEnv){
 
-        Set<? extends Element> constructorElements = roundEnv.getElementsAnnotatedWith(TPFConstructor.class);
-
-        if(!constructorElements.isEmpty()) {
-            //Make sure that if a class has TPFConstructor, it's a TPFNode or TPFResource
-            HashMap<TypeElement, List<ExecutableElement>> classesAndTPFConstructors = new HashMap<>();
-            //Gather all the potential constructors first.
-            for (Element elem : constructorElements) {
-                TypeElement classEnclosed = (TypeElement) elem.getEnclosingElement();
-                if (classEnclosed.getAnnotation(TPFNode.class) == null && classEnclosed.getAnnotation(TPFResource.class) == null) {
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "TPFConstructor must be used on classes annotated with TPFNode or TPFResource", elem);
-                }
-
-                classesAndTPFConstructors.computeIfAbsent(classEnclosed, k -> new ArrayList<ExecutableElement>()).add((ExecutableElement) elem);
+    private TPFMetadataFile findTPFValuesFile(){
+        try(InputStream is = TPF.class.getClassLoader()
+                .getResourceAsStream("META-INF/tpf/metadata.json")) {
+            if (is != null) {
+                ObjectMapper mapper = new ObjectMapper();
+                TPFMetadataFile metaFile = mapper.readValue(is, TPFMetadataFile.class);
+                return metaFile;
             }
+        } catch (IOException e) {
+            return null;
+            //throw new RuntimeException(e);
+        }
+        return null;
+    }
 
-            boolean failed = false;
-            for (Map.Entry<TypeElement, List<ExecutableElement>> entry : classesAndTPFConstructors.entrySet()) {
-                TypeElement enclosingClass = entry.getKey();
-                List<ExecutableElement> possibleConstructors = entry.getValue();
+    @Override
+    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        if(roundEnv.processingOver()) return false;
 
-                //If a class is annotated with TPFConstructor more than once, no bueno.
-                if (possibleConstructors.size() > 1) {
-                    for (ExecutableElement element : possibleConstructors) {
-                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "The class " + enclosingClass.getQualifiedName() + " cannot have more than one constructor annotated with @TPFConstruct", element);
-                        failed = true;
-                    }
-                }
-                else if(possibleConstructors.size() == 1)
-                {
-                    constructors.put(enclosingClass, possibleConstructors.getFirst());
-                }
-            }
+        boolean alreadyGenerated = false;
+        try {
+            FileObject resource = processingEnv.getFiler()
+                    .getResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.lock");
+            resource.openInputStream().close(); // Try reading
+            alreadyGenerated = true; // If no exception, it exists
+        } catch (IOException e) {
+            // Lock file doesn't exist yet
+            alreadyGenerated = false;
+        }
 
+
+        //processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, " Lock file present");
+        //if(alreadyGenerated) return false;
+        //processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, " Lock file missing");
+
+
+        count += 1;
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "Processing round. Over=" + roundEnv.processingOver() + ", Annotations=" + roundEnv.getRootElements().size() + " Count: " + count);
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "\t " +roundEnv.getRootElements());
+        List<Element> tpfComponents = new ArrayList<>();
+        List<Element> nodeElements = new ArrayList<>(roundEnv.getElementsAnnotatedWith(TPFNode.class));
+        List<Element> resourceElements = new ArrayList<>(roundEnv.getElementsAnnotatedWith(TPFResource.class));
+
+        tpfComponents.addAll(nodeElements);
+        tpfComponents.addAll(resourceElements);
+
+        List<Element> valueElements = new ArrayList<>(roundEnv.getElementsAnnotatedWith(TPFValue.class));
+
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,"TPF Component Count: " + tpfComponents.size());
+
+
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,"\t"+nodeElements.toString());
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,"\t"+resourceElements.toString());
+
+        //TODO: Doesn't account for TPFValue or other annotations, take care here.
+        if(tpfComponents.isEmpty() && valueElements.isEmpty()){
+            return false;
+        }
+
+
+
+
+        boolean encounteredDoubleAnnotation = preventNodeAndResourceAnnotation(tpfComponents);
+        if(encounteredDoubleAnnotation){
             return true;
         }
-        return false;
-    }
-    private class TopologicalSort {
 
-        public static StringSortResult kahnTopologicalSortString(HashMap<String, List<String>> adjacencyList) {
-            Map<String, Integer> inDegree = new HashMap<>();
+        HashMap<String, TypeElement> aliases = new HashMap<>();
+        boolean errorWithAlias = handleAliases(tpfComponents, aliases);
 
-            // Initialize in-degrees
-            for (String node : adjacencyList.keySet()) {
-                inDegree.putIfAbsent(node, 0);
-                for (String neighbor : adjacencyList.get(node)) {
-                    inDegree.put(neighbor, inDegree.getOrDefault(neighbor, 0) + 1);
-                }
-            }
-
-            // PriorityQueue for deterministic order (alphabetical)
-            PriorityQueue<String> queue = new PriorityQueue<>();
-
-            for (Map.Entry<String, Integer> entry : inDegree.entrySet()) {
-                if (entry.getValue() == 0) {
-                    queue.offer(entry.getKey());
-                }
-            }
-
-            List<String> sortedList = new ArrayList<>();
-            while (!queue.isEmpty()) {
-                String current = queue.poll();
-                sortedList.add(current);
-
-                for (String neighbor : adjacencyList.getOrDefault(current, Collections.emptyList())) {
-                    inDegree.put(neighbor, inDegree.get(neighbor) - 1);
-                    if (inDegree.get(neighbor) == 0) {
-                        queue.offer(neighbor);
-                    }
-                }
-            }
-
-            // If not all nodes are in sorted list, there's a cycle
-            if (sortedList.size() != inDegree.size()) {
-                List<String> cycleNodes = new ArrayList<>();
-                for (Map.Entry<String, Integer> entry : inDegree.entrySet()) {
-                    if (entry.getValue() > 0) {
-                        cycleNodes.add(entry.getKey());
-                    }
-                }
-                return new StringSortResult(null, cycleNodes);
-            }
-
-            return new StringSortResult(sortedList, null);
+        if(errorWithAlias){
+            return true;
         }
 
+        HashMap<TypeElement, ClassValueMetadata> allClassData = new HashMap<>();
+
+        Set<VariableElement> tpfValueVariables = new HashSet<>();
+        HashSet<String> configLocations = new HashSet<>();
+        boolean tpfValueErrorOccurred = handleTPFValue(allClassData,tpfValueVariables, configLocations, roundEnv);
+
+        if(tpfValueErrorOccurred){
+            return true;
+        }
+
+        //HashMap<String,TypeElement> aliases, HashMap<VariableElement, TypeElement> qualifierClassTranslations,RoundEnvironment round
+        HashMap<VariableElement, TypeElement> qualifierClassTranslations = new HashMap<>();
+        boolean tpfQualifierErrorOccurred = handleTPFQualifier(aliases, qualifierClassTranslations, roundEnv);
+
+        if(tpfQualifierErrorOccurred){
+            return true;
+        }
+
+        HashMap<TypeElement,List<TypeElement>> adjacencyList = new HashMap<>();
+        HashMap<TypeElement,ConstructorInformation> constructorInformation = new LinkedHashMap<>();
+        boolean constructorErrorOccurred = handleTPFConstructors(tpfComponents, constructorInformation,  tpfValueVariables, qualifierClassTranslations, adjacencyList);
+
+        if(constructorErrorOccurred){
+            return true;
+        }
+
+
+
+
+        TopologicalSort.SortResult sortResult = TopologicalSort.kahnTopologicalSort(adjacencyList);
+        if(sortResult.sortedList == null){
+            StringBuilder cycleMsg = new StringBuilder("Cycle detected in dependencies between:\n");
+
+            for (TypeElement elem : sortResult.cycleNodes) {
+                cycleMsg.append(" - ").append(elem.getQualifiedName()).append("\n");
+            }
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, cycleMsg.toString());
+            return true;
+        }
+        else
+        {
+            System.out.println("Options for sorting: " + sortResult.sortedList.size());
+            HashMap<String, ClassValueMetadata> valueInformation = new HashMap<>();
+            LinkedHashMap<String, ConstructorInformation> constructorCreationOrder = new LinkedHashMap<>();
+
+            Collections.reverse(sortResult.sortedList);
+
+            for(TypeElement key : allClassData.keySet())
+            {
+                valueInformation.put(key.getQualifiedName().toString(), allClassData.get(key));
+            }
+
+            for(TypeElement clazz : sortResult.sortedList){
+                constructorCreationOrder.put(clazz.getQualifiedName().toString(), constructorInformation.get(clazz));
+            }
+
+            TPFMetadataFile metaFile = new TPFMetadataFile(valueInformation, constructorCreationOrder, configLocations);
+            //Serialize this metaFile now.
+            try {
+                // Create resource file under META-INF/tpf/
+                FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.json");
+                try (Writer writer = file.openWriter()) {
+                    // Serialize your object to JSON string (using Jackson or Gson)
+                    ObjectMapper mapper = new ObjectMapper();
+                    String jsonString = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(metaFile);
+
+                    // Write JSON string to the file
+                    writer.write(jsonString);
+
+                    // 4. Write the lock file
+                    FileObject lockFile = processingEnv.getFiler()
+                            .createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.lock");
+                    lockFile.openWriter().close(); // empty file, just a marker
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+                // handle or propagate error as appropriate
+            }
+        }
+
+        return true;
+    }
+
+    private class TopologicalSort {
 
         public static SortResult kahnTopologicalSort(HashMap<TypeElement, List<TypeElement>> adjacencyList) {
             Map<TypeElement, Integer> inDegree = new HashMap<>();
@@ -784,15 +741,6 @@ public class TPFNodeProcessor extends AbstractProcessor {
             }
 
             return new SortResult(sortedList, null);
-        }
-
-        private static class StringSortResult{
-            public final List<String> sortedList;
-            public final List<String> cycleNodes;
-            public StringSortResult(List<String> sortedList, List<String> cycleNodes){
-                this.sortedList = sortedList;
-                this.cycleNodes = cycleNodes;
-            }
         }
 
         private static class SortResult {

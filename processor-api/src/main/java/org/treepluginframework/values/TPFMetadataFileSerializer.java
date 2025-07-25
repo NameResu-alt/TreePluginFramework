@@ -14,7 +14,7 @@ public class TPFMetadataFileSerializer extends JsonSerializer<TPFMetadataFile> {
         gen.writeStartObject();
 
         // Write each class metadata under its class name
-        for (Map.Entry<String, ClassMetadata> entry : metadata.classes.entrySet()) {
+        for (Map.Entry<String, ClassValueMetadata> entry : metadata.classes.entrySet()) {
             gen.writeObjectField(entry.getKey(), entry.getValue());
         }
         System.out.println("Got into the end of serialize");

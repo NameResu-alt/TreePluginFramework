@@ -1,32 +1,36 @@
 package org.treepluginframework.component_architecture;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.treepluginframework.values.ClassMetadata;
-import org.treepluginframework.values.MemberValueInfo;
+import org.treepluginframework.values.ClassValueMetadata;
+import org.treepluginframework.values.ConstructorInformation;
+import org.treepluginframework.values.ParameterValueInfo;
 import org.treepluginframework.values.TPFMetadataFile;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Parameter;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class TPFNodeRepository {
     //I need to store the nodes that I got in here.
     //Just putting them into the dispatcher doesn't seem like a sound decision.
     //I'm assuming that there will only ever be 1 type of node, maybe better way?
+    private static final Map<String, Class<?>> PRIMITIVE_TYPE_MAP = Map.ofEntries(
+            Map.entry("boolean", boolean.class),
+            Map.entry("byte", byte.class),
+            Map.entry("char", char.class),
+            Map.entry("short", short.class),
+            Map.entry("int", int.class),
+            Map.entry("long", long.class),
+            Map.entry("float", float.class),
+            Map.entry("double", double.class),
+            Map.entry("void", void.class)
+    );
+
+    //Assumption is that if there's a node, then there's only 1 of that class.
     Map<Class<?>,Object> nodes = new HashMap<>();
     //Same thing here.
     Map<Class<?>, Object> resources = new HashMap<>();
-
-    Map<String,Object> aliases = new HashMap<>();
 
     private Map<Class<?>, Constructor<?>> constructorCache = new HashMap<>();
 
@@ -43,6 +47,117 @@ public class TPFNodeRepository {
     }
 
 
+    public void generateNodesAndResourcesV2(){
+        //LinkedHashMap<String, ClassValueMetadata> createOrder = (LinkedHashMap<String, ClassValueMetadata>) metadataFile.classes;
+        LinkedHashMap<String,ConstructorInformation> createOrder = metadataFile.constructorInformation;
+
+
+        metadataFile.printMetadataFile();
+        for(String qualifiedClassName : createOrder.keySet()){
+            ConstructorInformation constructorInfo = metadataFile.constructorInformation.get(qualifiedClassName);
+            ClassValueMetadata classData = metadataFile.classes.getOrDefault(qualifiedClassName, null);
+
+            Class<?> wantedClass = null;
+            try {
+                wantedClass = Class.forName(qualifiedClassName);
+            } catch (ClassNotFoundException e) {
+                throw new RuntimeException(e);
+            }
+
+            System.out.println("Current Class: " + qualifiedClassName);
+
+            Class<?>[] neededConstructorParams = getParameters(constructorInfo.neededConstructorParameters);
+            Class<?>[] desiredConstructorParams = getParameters(constructorInfo.desiredConstructorParameters);
+
+            Constructor<?> matchingConstructor = findConstructor(wantedClass, neededConstructorParams);
+
+            String constructorSig = Arrays.stream(neededConstructorParams)
+                    .map(paramClass -> "(" + paramClass.getCanonicalName() + ")")
+                    .collect(Collectors.joining(",", "[", "]"));
+
+            List<ParameterValueInfo> tpfValueParameters = (classData != null) ? classData.parameters.getOrDefault(constructorSig, null) : null;
+            ParameterValueInfo[] mappedValues = new ParameterValueInfo[neededConstructorParams.length];
+            if(tpfValueParameters != null){
+                for(ParameterValueInfo inf : tpfValueParameters){
+                    mappedValues[inf.positionInConstructor] = inf;
+                }
+            }
+
+            Object[] params = new Object[neededConstructorParams.length];
+
+            for(int i = 0; i<params.length;i++){
+                Class<?> classOfCurrentParameter = desiredConstructorParams[i];
+                //Okay, parameters don't retain their name, so I can't do it that way.
+
+                if(mappedValues[i] != null){
+                    ParameterValueInfo inf = mappedValues[i];
+                    params[i] = valueRepository.getValue(inf.location, classOfCurrentParameter);
+                    if(params[i] == null){
+                        params[i] = TPFValueRepository.convertStringToType(inf.defaultValue,classOfCurrentParameter);
+                    }
+
+                    if(params[i] == null){
+                        throw new RuntimeException("Unable to find the value at location " + inf.location +" and Unable to convert the default value " + inf.defaultValue + " to the type " + classOfCurrentParameter.getCanonicalName());
+                    }
+                }
+                else
+                {
+                    params[i] = this.getNode(classOfCurrentParameter);
+                }
+            }
+
+            try {
+                System.out.println("Wanted class: " + wantedClass.getCanonicalName());
+                System.out.println(Arrays.toString(params));
+                System.out.println("Check Args: " + constructorSig);
+                Object newObj = matchingConstructor.newInstance(params);
+                nodes.put(wantedClass, newObj);
+                valueRepository.injectFields(newObj);
+            } catch (InstantiationException | IllegalAccessException | InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
+            constructorCache.put(wantedClass, matchingConstructor);
+        }
+    }
+
+    private Class<?>[] getParameters(List<String> constructorParamsNeeded){
+        Class<?>[] parametersInCorrectConstructor = new Class<?>[constructorParamsNeeded.size()];
+
+        for(int i = 0; i<constructorParamsNeeded.size();i++){
+            String p = constructorParamsNeeded.get(i);
+
+            if(PRIMITIVE_TYPE_MAP.containsKey(p)){
+                parametersInCorrectConstructor[i] = PRIMITIVE_TYPE_MAP.get(p);
+            }
+            else
+            {
+                try {
+                    parametersInCorrectConstructor[i] = Class.forName(p);
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
+
+        return parametersInCorrectConstructor;
+    }
+    private Constructor<?> findConstructor(Class<?> wantedClass, Class<?>[] parametersInCorrectConstructor){
+
+        System.out.println("Need: " + Arrays.toString(parametersInCorrectConstructor));
+        for(Constructor<?> ctor : wantedClass.getConstructors()){
+            if(Arrays.equals(parametersInCorrectConstructor, ctor.getParameterTypes()))
+            {
+                System.out.println("\tFound match");
+                return ctor;
+            }
+        }
+        System.out.println("Failed to find match");
+
+        return null;
+    }
+
+
+    /*
     //This should also be the class that reads the META-INF and generates the tree.
     public void generateNodesAndResources(){
 
@@ -88,13 +203,13 @@ public class TPFNodeRepository {
                         for (int i = 0; i < needed_parameters.length; i++) {
                             Parameter current = constructorParameters[i];
 
-                            MemberValueInfo inf = classMetadata.parameters.get(current.getName());
+                            FieldValueInfo inf = classMetadata.parameters.get(current.getName());
 
                             if (inf == null) {
                                 // Fallback: try to find by type
                                 Class<?> paramType = classParameters[i];
 
-                                List<MemberValueInfo> matching = classMetadata.parameters.values().stream()
+                                List<FieldValueInfo> matching = classMetadata.parameters.values().stream()
                                         .filter(m -> {
                                             try {
                                                 return Class.forName(m.type).equals(paramType);
@@ -152,7 +267,7 @@ public class TPFNodeRepository {
 
                     if(classMetadata != null && created_obj != null){
                         for(String variableName : classMetadata.fields.keySet()){
-                            MemberValueInfo inf = classMetadata.fields.get(variableName);
+                            FieldValueInfo inf = classMetadata.fields.get(variableName);
                             Field field = clazz.getDeclaredField(variableName);
                             Object value = valueRepository.getValue(inf.location, field.getType());
 
@@ -175,6 +290,7 @@ public class TPFNodeRepository {
 
         System.out.println("Finished creating dependencies");
     }
+     */
 
     private Constructor<?> findMatchingConstructor(Class<?> clazz, Class<?>... argTypes) {
         for (Constructor<?> ctor : clazz.getConstructors()) {

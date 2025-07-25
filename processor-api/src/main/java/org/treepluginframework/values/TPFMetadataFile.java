@@ -1,15 +1,10 @@
 package org.treepluginframework.values;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
@@ -17,10 +12,32 @@ import java.util.*;
 
 @JsonSerialize()
 public class TPFMetadataFile {
-    public Map<String, ClassMetadata> classes = new LinkedHashMap<>();
+    public Map<String, ClassValueMetadata> classes = new HashMap<>();
+
+    //The create order. Has to be this way, unfortunately.
+    public LinkedHashMap<String, ConstructorInformation> constructorInformation = new LinkedHashMap<>();
+
+
+    //Location of values that you need to store.
     public HashSet<String> locations = new HashSet<>();
 
-    public void printMetadatFile(){
+    public Date timeCreated;
+
+    public boolean error = false;
+
+    public TPFMetadataFile(){
+
+    }
+
+    public TPFMetadataFile(HashMap<String, ClassValueMetadata> classes, LinkedHashMap<String,ConstructorInformation> constructorInformation, HashSet<String> locations){
+        this.classes = classes;
+        this.locations = locations;
+        this.constructorInformation = constructorInformation;
+        this.timeCreated = new Date();
+    }
+
+
+    public void printMetadataFile(){
         ObjectMapper mapper = new ObjectMapper();
         String json = null;
         try {

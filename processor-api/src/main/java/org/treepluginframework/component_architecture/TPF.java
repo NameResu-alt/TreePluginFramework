@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.treepluginframework.values.TPFMetadataFile;
 
 import java.io.*;
-import java.util.List;
 
 //Need to make it an interface. So that I have a test version, and a real version.
 public class TPF {
@@ -13,6 +12,7 @@ public class TPF {
     private final TPFValueRepository valueRepository;
 
     private final TPFMetadataFile metadataFile;
+
 
     public TPF(File configurationFile){
         this.metadataFile = findTPFValuesFile();
@@ -27,7 +27,8 @@ public class TPF {
     }
 
     public void start(){
-        nodeRepository.generateNodesAndResources();
+        nodeRepository.generateNodesAndResourcesV2();
+        //nodeRepository.generateNodesAndResources();
     }
 
     public <T> T getNode(Class<T> classType){
@@ -39,27 +40,12 @@ public class TPF {
     }
 
 
-    public void testMetaINF()
-    {
-        try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/values.json")) {
-            if (is != null) {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-                List<String> lines = reader.lines().toList();
-                System.out.println(lines);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     private TPFMetadataFile findTPFValuesFile(){
         try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/values.json")) {
+                .getResourceAsStream("META-INF/tpf/metadata.json")) {
             if (is != null) {
                 ObjectMapper mapper = new ObjectMapper();
                 TPFMetadataFile metaFile = mapper.readValue(is, TPFMetadataFile.class);
-
                 return metaFile;
             }
         } catch (IOException e) {
@@ -69,4 +55,7 @@ public class TPF {
         return null;
     }
 
+    public void injectValues(Object ob){
+        this.valueRepository.injectFields(ob);
+    }
 }
