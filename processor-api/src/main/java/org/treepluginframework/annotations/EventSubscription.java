@@ -9,4 +9,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 public @interface EventSubscription {
     int priority() default 0;
+    //Without useSuperClasses, it's only going to look for that exact method.
+    boolean useSuperClasses() default false;
 }

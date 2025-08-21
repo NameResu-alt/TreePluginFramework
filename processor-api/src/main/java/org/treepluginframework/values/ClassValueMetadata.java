@@ -20,6 +20,8 @@ public class ClassValueMetadata {
     public Map<String,List<ParameterValueInfo>> parameters = new HashMap<>();
     public Map<String, FieldValueInfo> fields = new HashMap<>();
 
+
+
     @JsonIgnore
     public boolean isEmpty(){
         return parameters.isEmpty() && fields.isEmpty();

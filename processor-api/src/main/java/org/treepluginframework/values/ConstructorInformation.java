@@ -10,6 +10,8 @@ public class ConstructorInformation {
     //The actual types that I'll need. For example, if selected has an abstract class for a value, but needed contains a definition of it.
     public List<String> desiredConstructorParameters = new ArrayList<>();
 
+    public List<String> dependencies = new ArrayList<>();
+
     public ConstructorInformation(){
 
     }

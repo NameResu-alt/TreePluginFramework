@@ -18,8 +18,15 @@ public class TPFMetadataFile {
     public LinkedHashMap<String, ConstructorInformation> constructorInformation = new LinkedHashMap<>();
 
 
-    //Location of values that you need to store.
-    public HashSet<String> locations = new HashSet<>();
+    /***
+     * Location of values from Docker Secrets -> Default Configuration File -> Environment Variables
+     ***/
+    public HashSet<String> globalValueLocations = new HashSet<>();
+
+    /***
+     * Location of values from specific configuration files that are loaded during the start of runtime.
+     ***/
+    public HashMap<String,HashSet<String>> fileValueLocations = new HashMap<>();
 
     public Date timeCreated;
 
@@ -29,10 +36,11 @@ public class TPFMetadataFile {
 
     }
 
-    public TPFMetadataFile(HashMap<String, ClassValueMetadata> classes, LinkedHashMap<String,ConstructorInformation> constructorInformation, HashSet<String> locations){
+    public TPFMetadataFile(HashMap<String, ClassValueMetadata> classes, LinkedHashMap<String,ConstructorInformation> constructorInformation, HashSet<String> globalLocations, HashMap<String,HashSet<String>> configFileLocations){
         this.classes = classes;
-        this.locations = locations;
+        this.globalValueLocations = globalLocations;
         this.constructorInformation = constructorInformation;
+        this.fileValueLocations = configFileLocations;
         this.timeCreated = new Date();
     }
 

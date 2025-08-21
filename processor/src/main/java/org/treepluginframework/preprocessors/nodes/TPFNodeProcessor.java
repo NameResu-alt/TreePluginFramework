@@ -10,6 +10,7 @@ import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
 import javax.lang.model.type.*;
+import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
@@ -85,7 +86,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
 
     //Constructor can see if this method already handled it for that class, and just skip that parameter.
     //The errorOccurred stuff is just so that all bad TPFValue annotations are taken care of immediately.
-    private boolean handleTPFValue(HashMap<TypeElement, ClassValueMetadata> allClassData, Set<VariableElement> usedVariables, Set<String> configLocations, RoundEnvironment roundEnv){
+    private boolean handleTPFValue(HashMap<TypeElement, ClassValueMetadata> allClassData, Set<VariableElement> usedVariables, Set<String> globalValueLocations, HashMap<String,HashSet<String>> configValueLocations, RoundEnvironment roundEnv){
         //Check the values first, and translate if necessary.
         //I store an executable hashmap?
         List<Element> valueVariables = new ArrayList<>(roundEnv.getElementsAnnotatedWith(TPFValue.class));
@@ -148,9 +149,18 @@ public class TPFNodeProcessor extends AbstractProcessor {
                 }
                 else
                 {
-                    classData.fields.put(variableElement.getSimpleName().toString(), new FieldValueInfo(type, valueAnnotation.location(), valueAnnotation.defaultValue()));
+                    //If the fileName is not empty?
+                    classData.fields.put(variableElement.getSimpleName().toString(), new FieldValueInfo(type, valueAnnotation.fileName(), valueAnnotation.location(), valueAnnotation.defaultValue()));
                 }
-                configLocations.add(valueAnnotation.location());
+                //depends
+                if(valueAnnotation.fileName().isEmpty()){
+                    globalValueLocations.add(valueAnnotation.location());
+
+                }
+                else
+                {
+                    configValueLocations.computeIfAbsent(valueAnnotation.fileName(), k-> new HashSet<>()).add(valueAnnotation.location());
+                }
                 usedVariables.add(variableElement);
             }
         }
@@ -320,6 +330,12 @@ public class TPFNodeProcessor extends AbstractProcessor {
 
         boolean errorOccurred = false;
 
+        Elements elementUtils = processingEnv.getElementUtils();
+
+        TypeMirror tpfClassMirror = elementUtils
+                .getTypeElement("org.treepluginframework.component_architecture.TPF")
+                .asType();
+
         for(Element elem : tpfComponents){
             TypeElement clazz = (TypeElement) elem;
             List<? extends Element> enclosed = clazz.getEnclosedElements();
@@ -419,15 +435,17 @@ public class TPFNodeProcessor extends AbstractProcessor {
                         continue;
                     }
 
-
-
                     TypeElement parameterType = (TypeElement) processingEnv.getTypeUtils().asElement(paramType);
 
+                    boolean nonDependency = false;
                     if(parameterType.getAnnotation(TPFNode.class) == null && parameterType.getAnnotation(TPFResource.class) == null)
                     {
-                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Parameters for TPFNode/Resource main constructor must be TPFNode/Resources themselves, or be annotated with TPFValue: " + paramType.getClass().getCanonicalName(), parameter);
-                        errorOccurred = true;
-                        continue;
+                        if(!processingEnv.getTypeUtils().isSameType(parameterType.asType(), tpfClassMirror)){
+                            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Parameters for TPFNode/Resource main constructor must be TPFNode/Resources themselves, or be annotated with TPFValue: " + paramType.getClass().getCanonicalName(), parameter);
+                            errorOccurred = true;
+                            continue;
+                        }
+                        nonDependency = true;
                     }
 
                     //If it didn't, now I manually have to go through and see what I could use instead.
@@ -516,7 +534,9 @@ public class TPFNodeProcessor extends AbstractProcessor {
                     }
 
                     desiredParameterTypes.add(desiredClass.getQualifiedName().toString());
-                    dependencies.add(desiredClass);
+
+                    if(!nonDependency)
+                        dependencies.add(desiredClass);
 
                     //Just in case the dependency itself never uses the constructor stuff, so that it doesn't show up null.
                     //allClassData.computeIfAbsent(desiredClass, k-> new ClassValueMetadata());
@@ -526,10 +546,16 @@ public class TPFNodeProcessor extends AbstractProcessor {
                     //constructorInformation.computeIfAbsent(desiredClass, k->new ConstructorInformation());
                 }
 
+
+                List<String> dependencyString = dependencies.stream().map(
+                        type -> type.getQualifiedName().toString()
+                ).toList();
+
                 //Add the dependencies to the class Metadata.
                 ConstructorInformation info = new ConstructorInformation();
                 info.neededConstructorParameters = neededParameterTypes;
                 info.desiredConstructorParameters = desiredParameterTypes;
+                info.dependencies = dependencyString;
                 constructorInformation.put(clazz, info);
             }
             else
@@ -619,8 +645,9 @@ public class TPFNodeProcessor extends AbstractProcessor {
         HashMap<TypeElement, ClassValueMetadata> allClassData = new HashMap<>();
 
         Set<VariableElement> tpfValueVariables = new HashSet<>();
-        HashSet<String> configLocations = new HashSet<>();
-        boolean tpfValueErrorOccurred = handleTPFValue(allClassData,tpfValueVariables, configLocations, roundEnv);
+        HashSet<String> globalValueLocations = new HashSet<>();
+        HashMap<String,HashSet<String>> configFileLocations = new HashMap<>();
+        boolean tpfValueErrorOccurred = handleTPFValue(allClassData,tpfValueVariables, globalValueLocations, configFileLocations, roundEnv);
 
         if(tpfValueErrorOccurred){
             return true;
@@ -670,14 +697,14 @@ public class TPFNodeProcessor extends AbstractProcessor {
 
             for(TypeElement key : allClassData.keySet())
             {
-                valueInformation.put(key.getQualifiedName().toString(), allClassData.get(key));
+                valueInformation.put(toRuntimeClassName(key, processingEnv.getElementUtils()), allClassData.get(key));
             }
 
             for(TypeElement clazz : sortResult.sortedList){
-                constructorCreationOrder.put(clazz.getQualifiedName().toString(), constructorInformation.get(clazz));
+                constructorCreationOrder.put(toRuntimeClassName(clazz, processingEnv.getElementUtils()), constructorInformation.get(clazz));
             }
 
-            TPFMetadataFile metaFile = new TPFMetadataFile(valueInformation, constructorCreationOrder, configLocations);
+            TPFMetadataFile metaFile = new TPFMetadataFile(valueInformation, constructorCreationOrder, globalValueLocations, configFileLocations);
             //Serialize this metaFile now.
             writeTPFFile(metaFile);
         }
@@ -685,60 +712,23 @@ public class TPFNodeProcessor extends AbstractProcessor {
         return true;
     }
 
-    private class TopologicalSort {
+    private String toRuntimeClassName(TypeElement typeElement, Elements elementUtils) {
+        String packageName = elementUtils.getPackageOf(typeElement).getQualifiedName().toString();
+        String fullQualifiedName = typeElement.getQualifiedName().toString();
 
-        /*
-        public static SortResult kahnTopologicalSort(HashMap<TypeElement, List<TypeElement>> adjacencyList) {
-            Map<TypeElement, Integer> inDegree = new HashMap<>();
-
-            for (TypeElement node : adjacencyList.keySet()) {
-                inDegree.putIfAbsent(node, 0);
-                for (TypeElement neighbor : adjacencyList.get(node)) {
-                    inDegree.put(neighbor, inDegree.getOrDefault(neighbor, 0) + 1);
-                }
-            }
-
-            //Makes it deterministic, so it'll always choose the first alphabetically if given the chance.
-            PriorityQueue<TypeElement> queue = new PriorityQueue<>(new Comparator<TypeElement>() {
-                @Override
-                public int compare(TypeElement o1, TypeElement o2) {
-                    return o1.getSimpleName().toString().compareTo(o2.getSimpleName().toString());
-                }
-            });
-
-            for (Map.Entry<TypeElement, Integer> entry : inDegree.entrySet()) {
-                if (entry.getValue() == 0) {
-                    queue.offer(entry.getKey());
-                }
-            }
-
-            List<TypeElement> sortedList = new ArrayList<>();
-            while (!queue.isEmpty()) {
-                TypeElement current = queue.poll();
-                sortedList.add(current);
-
-                for (TypeElement neighbor : adjacencyList.getOrDefault(current, Collections.emptyList())) {
-                    inDegree.put(neighbor, inDegree.get(neighbor) - 1);
-                    if (inDegree.get(neighbor) == 0) {
-                        queue.offer(neighbor);
-                    }
-                }
-            }
-
-            if (sortedList.size() != inDegree.size()) {
-                // Nodes with non-zero in-degree are in a cycle
-                List<TypeElement> cycleNodes = new ArrayList<>();
-                for (Map.Entry<TypeElement, Integer> entry : inDegree.entrySet()) {
-                    if (entry.getValue() > 0) {
-                        cycleNodes.add(entry.getKey());
-                    }
-                }
-                return new SortResult(null, cycleNodes);
-            }
-
-            return new SortResult(sortedList, null);
+        if (packageName.isEmpty()) {
+            // Default package, rare case
+            return fullQualifiedName.replace('.', '$');
         }
-        */
+
+        // Get class path portion (relative to package)
+        String classPath = fullQualifiedName.substring(packageName.length() + 1); // +1 to skip dot
+        classPath = classPath.replace('.', '$'); // Replace inner class dots with $
+
+        return packageName + "." + classPath;
+    }
+
+    private class TopologicalSort {
 
         public static SortResult kahnTopologicalSort(HashMap<TypeElement, List<TypeElement>> adjacencyList) {
             Map<TypeElement, Integer> inDegree = new HashMap<>();
@@ -842,6 +832,5 @@ public class TPFNodeProcessor extends AbstractProcessor {
                 this.cycleNodes = cycleNodes;
             }
         }
-
     }
 }

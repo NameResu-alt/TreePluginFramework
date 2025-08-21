@@ -16,6 +16,16 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.PARAMETER,ElementType.FIELD})
 public @interface TPFValue {
+    /***
+     * If you need the value from a specific file, put the filename first, and then the location is the key
+     * @return
+     */
+    String fileName() default "";
+
+    /***
+     * If fileName is set, location turns into the key inside of that file. Otherwise, location is just the general key that is from Docker Secrets, Configruation Files, or Env Vars.
+     * @return
+     */
     String location();
     String defaultValue() default ""; // optional
 }

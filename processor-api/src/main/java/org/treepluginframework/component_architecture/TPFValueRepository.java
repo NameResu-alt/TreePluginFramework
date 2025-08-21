@@ -9,10 +9,7 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.*;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 
 /***
  * Hold the values of the config file.
@@ -24,36 +21,88 @@ public class TPFValueRepository {
 
 
     private HashMap<Class<?>,HashMap<String, Field>> cachedFields = new HashMap<>();
+    private HashMap<String,File> configurationFiles = new HashMap<>();
+    private HashMap<String,String> savedGlobalValues = new HashMap<>();
 
-    private HashMap<String,String> savedValues = new HashMap<>();
+    //Filename, location, value
+    private HashMap<String,HashMap<String,String>> savedConfigurationFileValues = new HashMap<>();
     private TPFMetadataFile metaFile;
+    private File globalConfigFile;
     /***
      * I need to add the docker secrets part too.
      */
-
-    public TPFValueRepository(File configFile, TPFMetadataFile metadataFile){
+    public TPFValueRepository(TPFMetadataFile metadataFile){
         metaFile = metadataFile;
-        if(metaFile == null)
-            return;
+    }
 
+    public void addGlobalConfigurationFile(File configurationFile){
+        this.globalConfigFile = configurationFile;
+    }
+
+    public void addConfigurationFile(File configurationFile){
+        configurationFiles.put(configurationFile.getName(),configurationFile);
+    }
+
+    public void loadAllValues(){
+        //Can't load values if there's no meta-file anyways?
+        if(metaFile == null) return;
         loadValuesFromDockerSecrets();
-        loadConfigFileValues(configFile);
+        loadGlobalConfigurationFileValues();
+        loadAllConfigurationFileValues();
         loadEnvironmentValues();
         loadFieldCache();
     }
 
-    //Need a way to handle .yml/.yaml and .properties.
-    //I want to allow for both, so yeah...
-    public TPFValueRepository(TPFMetadataFile metadataFile) {
-        metaFile = metadataFile;
-        if(metaFile == null)
-            return;
+    private void loadValuesFromDockerSecrets() {
+        for (String location : metaFile.globalValueLocations) {
+            File secretFile = new File("/run/secrets/" + location);
 
-        File configFile = findConfigurationFile();
-        loadValuesFromDockerSecrets();
-        loadConfigFileValues(configFile);
-        loadEnvironmentValues();
-        loadFieldCache();
+            // Check if the file exists before trying to read
+            if (secretFile.exists() && secretFile.isFile()) {
+                try {
+                    String value = Files.readString(secretFile.toPath()).trim(); // trim to remove trailing newlines
+                    savedGlobalValues.put(location, value);
+                } catch (IOException e) {
+                    //System.err.println("Failed to read secret for key: " + location);
+                    //e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void loadGlobalConfigurationFileValues(){
+        File globalConfig = (globalConfigFile == null) ? findConfigurationFile() : globalConfigFile;
+        if(globalConfig == null) return;
+        globalConfigFile = globalConfig;
+
+        HashMap<String,String> result = loadConfigFileValues(globalConfig, metaFile.globalValueLocations);
+        for(String key : result.keySet()){
+            if(savedGlobalValues.containsKey(key)){
+                continue;
+            }
+            savedGlobalValues.put(key, result.get(key));
+        }
+    }
+
+    private void loadAllConfigurationFileValues(){
+        for(String fileName : configurationFiles.keySet()){
+            File f = configurationFiles.get(fileName);
+            if(!metaFile.fileValueLocations.containsKey(fileName)){
+                continue;
+            }
+            loadConfigurationFile(f);
+        }
+    }
+
+    private void loadEnvironmentValues(){
+        for(String location : metaFile.globalValueLocations){
+            if(savedGlobalValues.containsKey(location)) continue;
+            String val = System.getenv(location);
+            if(val != null)
+            {
+                savedGlobalValues.put(location,val);
+            }
+        }
     }
 
     private void loadFieldCache(){
@@ -85,6 +134,16 @@ public class TPFValueRepository {
         }
     }
 
+    public void loadConfigurationFile(File configurationFile){
+        if(configurationFile == null){
+            return;
+        }
+        String fileName = configurationFile.getName();
+        HashMap<String,String> savedValues = loadConfigFileValues(configurationFile, metaFile.fileValueLocations.get(fileName));
+        savedConfigurationFileValues.computeIfAbsent(fileName, k-> new HashMap<String,String>()).putAll(savedValues);
+    }
+
+
     private File findConfigurationFile(){
         String configPath = System.getenv(CONFIG_ENV_VAR);
         System.out.println("Testing the EnvVar: " + CONFIG_ENV_VAR);
@@ -101,7 +160,7 @@ public class TPFValueRepository {
 
             if (extension == null ||
                     !(extension.equals(".yml") || extension.equals(".yaml") || extension.equals(".properties"))) {
-                throw new IllegalArgumentException("Unsupported or missing config file extension. Only .yml, .yaml, and .properties are supported.");
+                throw new IllegalArgumentException("Unsupported or missing config file extension. Only .yml, .yaml, and .properties are supported. - " + configPath);
             }
 
             try (InputStream in = getClass().getClassLoader().getResourceAsStream(configPath)) {
@@ -155,84 +214,61 @@ public class TPFValueRepository {
         return null;
     }
 
-    private void loadEnvironmentValues(){
-        for(String location : metaFile.locations){
-            if(savedValues.containsKey(location)) continue;
-            String val = System.getenv(location);
-            if(val != null)
-            {
-                savedValues.put(location,val);
-            }
-        }
-    }
 
-    private void loadConfigFileValues(File configFile){
+    private HashMap<String,String> loadConfigFileValues(File configFile, Set<String> keyLocations){
         if(configFile == null){
-            return;
+            return null;
         }
 
         String extension = getFileExtension(configFile).toLowerCase();
         if(extension.isEmpty()){
             System.out.println("The file " + configFile.getName() + " does not have an extension, can't read from it");
-            return;
+            return null;
         }
 
+        HashMap<String,String> savedValues = new HashMap<>();
 
         switch(extension){
             case "properties":
-                readValuesFromProperties(configFile);
+                savedValues = readValuesFromProperties(configFile, keyLocations);
                 break;
             case "yaml":
             case "yml":
-                readValuesFromYML(configFile);
+                savedValues = readValuesFromYML(configFile, keyLocations);
                 break;
             default:
                 System.out.println("The file type of " + configFile.getName() + " is not supported");
                 break;
         }
+
+        return savedValues;
     }
 
-    private void loadValuesFromDockerSecrets() {
-        for (String location : metaFile.locations) {
-            File secretFile = new File("/run/secrets/" + location);
-
-            // Check if the file exists before trying to read
-            if (secretFile.exists() && secretFile.isFile()) {
-                try {
-                    String value = Files.readString(secretFile.toPath()).trim(); // trim to remove trailing newlines
-                    savedValues.put(location, value);
-                } catch (IOException e) {
-                    //System.err.println("Failed to read secret for key: " + location);
-                    //e.printStackTrace();
-                }
-            }
-        }
-    }
-
-    private void readValuesFromProperties(File propertiesFile){
+    private HashMap<String,String> readValuesFromProperties(File propertiesFile, Set<String> wantedKeys){
+        HashMap<String,String> savedValues = new HashMap<>();
         Properties configProperties = new Properties();
         try(FileInputStream fis = new FileInputStream(propertiesFile))
         {
             configProperties.load(fis);
-
-            HashSet<String> locs = metaFile.locations;
-            for(String loc : locs){
+            for(String loc : wantedKeys){
                 if(configProperties.containsKey(loc)){
-                    savedValues.put(loc, configProperties.getProperty(loc));
+                    savedValues.put(loc,configProperties.getProperty(loc));
                 }
             }
-
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+
+        return savedValues;
     }
 
-    private void readValuesFromYML(File yamlFile) {
+    private HashMap<String,String> readValuesFromYML(File yamlFile, Set<String> wantedKeys) {
+        HashMap<String,String> savedValues = new HashMap<>();
         try (InputStream input = new FileInputStream(yamlFile)) {
             Yaml yaml = new Yaml();
             Map<String, Object> data = yaml.load(input);
 
-            for (String location : metaFile.locations) {
+            for (String location : wantedKeys) {
                 String[] pathPieces = location.split("\\.");
                 Object current = data;
 
@@ -245,17 +281,18 @@ public class TPFValueRepository {
                 }
 
                 if (current instanceof String value) {
-                    savedValues.put(location, value);
+                    savedValues.put(location,value);
                 } else if (current != null) {
-                    savedValues.put(location, current.toString()); // fallback for numbers, booleans, etc.
+                    savedValues.put(location,current.toString());
                 }
             }
 
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
 
+        return savedValues;
+    }
 
     private String getFileExtension(File file) {
         String name = file.getName();
@@ -269,13 +306,50 @@ public class TPFValueRepository {
 
     public void printValues(){
         System.out.println("Saved Values:");
-        for(String location : savedValues.keySet()){
-            System.out.println("\t"+location+": "+savedValues.get(location));
+        for(String location : savedGlobalValues.keySet()){
+            System.out.println("\t"+location+": "+ savedGlobalValues.get(location));
         }
     }
 
-    public <T> T getValue(String location, Class<T> type){
-        return (savedValues.containsKey(location)) ? convertStringToType(savedValues.get(location),type) : null;
+    public <T> T getGlobalValue(String location, Class<T> type){
+        return (savedGlobalValues.containsKey(location)) ? convertStringToType(savedGlobalValues.get(location),type) : null;
+    }
+
+    public HashMap<String,Object> getFileValues(FileValueRequest request){
+
+        if(request.fileName == null || !savedConfigurationFileValues.containsKey(request.fileName)) return null;
+
+        HashMap<String,String> configValues = savedConfigurationFileValues.get(request.fileName);
+
+        HashMap<String,Object> result = new HashMap<>();
+        HashMap<String, Class<?>> wantedValues = request.wantedValues;
+
+        HashSet<String> valuesToBeFound = new HashSet<>();
+        for(String location : wantedValues.keySet())
+        {
+            if(!configValues.containsKey(location)){
+                System.out.println("Have to search for the values");
+                valuesToBeFound.add(location);
+            }
+        }
+
+        //Any missing values are added to the config for later.
+        if(!valuesToBeFound.isEmpty()){
+            HashMap<String,String> missingValues = loadConfigFileValues(configurationFiles.get(request.fileName), valuesToBeFound);
+            configValues.putAll(missingValues);
+        }
+
+        for(String location : wantedValues.keySet()){
+            if(!configValues.containsKey(location)){
+                result.put(location,null);
+            }
+            else
+            {
+                result.put(location, convertStringToType(configValues.get(location), wantedValues.get(location)));
+            }
+        }
+
+        return result;
     }
 
     public void injectFields(Object object){
@@ -300,11 +374,30 @@ public class TPFValueRepository {
 
         //System.out.println("Class Name: " + className);
         Map<String, FieldValueInfo> wantedFields = metaFile.classes.get(className).fields;
+
+        //File requests end up different, since a single file can have different types that are needed
+        HashMap<String, FileValueRequest> fileRequests = new HashMap<>();
+        //FileName, Location, corresponding field to set.
+        //I need the field, and the default value.
+        HashMap<String,HashMap<String,HashSet<FieldLocationStore>>> requestFields = new HashMap<>();
+
+        //Location, and a HashSet of Field+Default Value
+
         for(String varName : fields.keySet()){
             Field f = fields.get(varName);
             FieldValueInfo annotationsInfo = wantedFields.get(varName);
             System.out.println(varName + " " + annotationsInfo);
-            Object neededValue = getValue(annotationsInfo.location,f.getType());
+            //If AnnotationsInfo has a fileName, that means that I'm expecting a configuration file.
+            if(!annotationsInfo.fileName.isEmpty()){
+                FileValueRequest request = fileRequests.computeIfAbsent(annotationsInfo.fileName, k -> new FileValueRequest(annotationsInfo.fileName));
+                request.addWantedValue(annotationsInfo.location,f.getType());
+
+                HashMap<String,HashSet<FieldLocationStore>> fieldMap = requestFields.computeIfAbsent(annotationsInfo.fileName, k -> new HashMap<>());
+                HashSet<FieldLocationStore> neededFields = fieldMap.computeIfAbsent(annotationsInfo.location, k -> new HashSet<>());
+                neededFields.add(new FieldLocationStore(f, annotationsInfo.defaultValue));
+                continue;
+            }
+            Object neededValue = getGlobalValue(annotationsInfo.location,f.getType());
 
             if(neededValue == null){
                 neededValue = convertStringToType(annotationsInfo.defaultValue, f.getType());
@@ -316,6 +409,41 @@ public class TPFValueRepository {
                 throw new RuntimeException(e);
             }
         }
+
+        for(String fileName : fileRequests.keySet()){
+            FileValueRequest request = fileRequests.get(fileName);
+            //The stored values is location, and Object
+            //Values would be null if the file doesn't exist. That's why I check for values != null
+            HashMap<String,Object> values = this.getFileValues(request);
+
+            HashMap<String,HashSet<FieldLocationStore>> matchedFields = requestFields.get(fileName);
+
+            for(String location : matchedFields.keySet()){
+                for(FieldLocationStore store : matchedFields.get(location)){
+                    //This means that I actually found the value, so I just set it.
+                    if(values != null && values.containsKey(location) && values.get(location) != null){
+                        try {
+                            System.out.println("File Location: " + location +" Value: " + values.get(location));
+                            store.field.set(object, values.get(location));
+                        } catch (IllegalAccessException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                    else if(!store.defaultValue.isEmpty())
+                    {
+                        Object neededValue = convertStringToType(store.defaultValue, store.field.getType());
+                        try {
+                            store.field.set(object,neededValue);
+                        } catch (IllegalAccessException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
+            }
+
+        }
+
+
     }
 
     @SuppressWarnings("unchecked")
@@ -346,5 +474,31 @@ public class TPFValueRepository {
         }
     }
 
+    public static class FileValueRequest{
+        String fileName;
+        HashMap<String, Class<?>> wantedValues = new HashMap<>();
 
+        public FileValueRequest(String fileName, HashMap<String,Class<?>> wantedValues){
+            this.fileName = fileName;
+            this.wantedValues = wantedValues;
+        }
+
+        public FileValueRequest(String fileName){
+            this.fileName = fileName;
+        }
+
+        public void addWantedValue(String location, Class<?> type){
+            this.wantedValues.put(location,type);
+        }
+    }
+
+    private class FieldLocationStore{
+        Field field;
+        String defaultValue;
+
+        public FieldLocationStore(Field field, String defaultValue){
+            this.field = field;
+            this.defaultValue = defaultValue;
+        }
+    }
 }

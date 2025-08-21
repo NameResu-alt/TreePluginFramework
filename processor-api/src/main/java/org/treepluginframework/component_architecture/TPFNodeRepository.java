@@ -7,7 +7,6 @@ import org.treepluginframework.values.TPFMetadataFile;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Parameter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -37,7 +36,10 @@ public class TPFNodeRepository {
     private TPFValueRepository valueRepository;
     private TPFMetadataFile metadataFile;
 
-    public TPFNodeRepository(TPFValueRepository valueRepository, TPFMetadataFile metadataFile){
+    private TPF mainTPF;
+
+    public TPFNodeRepository(TPF mainTPF, TPFValueRepository valueRepository, TPFMetadataFile metadataFile){
+        this.mainTPF = mainTPF;
         this.valueRepository = valueRepository;
         this.metadataFile = metadataFile;
     }
@@ -89,9 +91,15 @@ public class TPFNodeRepository {
                 Class<?> classOfCurrentParameter = desiredConstructorParams[i];
                 //Okay, parameters don't retain their name, so I can't do it that way.
 
+                //Can take in the actual TPF class itself as a constructor parameter, if needed.
+                if(classOfCurrentParameter == TPF.class){
+                    params[i] = mainTPF;
+                    continue;
+                }
+
                 if(mappedValues[i] != null){
                     ParameterValueInfo inf = mappedValues[i];
-                    params[i] = valueRepository.getValue(inf.location, classOfCurrentParameter);
+                    params[i] = valueRepository.getGlobalValue(inf.location, classOfCurrentParameter);
                     if(params[i] == null){
                         params[i] = TPFValueRepository.convertStringToType(inf.defaultValue,classOfCurrentParameter);
                     }
