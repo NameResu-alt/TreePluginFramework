@@ -6,6 +6,7 @@ import org.treepluginframework.annotations.TPFValue;
 import org.treepluginframework.component_architecture.TPF;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 @TPFNode
@@ -18,9 +19,10 @@ public class GameStuff {
 
     List<Dup> dups = new ArrayList<>();
     TPF f;
-    public GameStuff(TPF f){
+    public GameStuff(TPF f,@TPFValue(fileName = "kitpvp.yml",location = "verify") TestJson check){
         this.f = f;
         System.out.println("Is TPF Null?: " + (f == null));
+        System.out.println("Whats the check value?: " + check);
     }
 
     ///
@@ -28,11 +30,23 @@ public class GameStuff {
     /// Take in the current event. Right now, fine for behaviour. May not always be fine.
     ///
     @EventSubscription(priority =  100)
-    public void tick(TickEvent event){
+    private void tick(TickEvent event){
         System.out.println("Got the tick event: " + this.getClass().getCanonicalName() + " Gaming: " + status + " ?? " + number);
         Dup newDup = new Dup(dups.size());
         dups.add(newDup);
         f.getEventDispatcher().register(this, newDup, false);
+    }
+
+
+    @EventSubscription(priority = 200)
+    public void clonedEvent(TickEvent event){
+        System.out.println("I'm here too!");
+    }
+
+
+    @EventSubscription
+    public void interfaceTest(InterfaceEvent event){
+        System.out.println("Interface event occurred");
     }
 
     private class Dup{

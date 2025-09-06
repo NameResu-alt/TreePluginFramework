@@ -1,9 +1,9 @@
 package org.treepluginframework.preprocessors.nodes;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.auto.service.AutoService;
-import org.checkerframework.checker.units.qual.C;
 import org.treepluginframework.annotations.*;
 import org.treepluginframework.component_architecture.TPF;
+import org.treepluginframework.preprocessors.Utilities;
 import org.treepluginframework.values.*;
 
 import javax.annotation.processing.*;
@@ -32,10 +32,13 @@ public class TPFNodeProcessor extends AbstractProcessor {
         this.filer = processingEnv.getFiler();
     }
 
+    /// TODO: TPFValue fields need to be able to be inherited. This means that I have to wait until processing rounds are over in order to do that.
+    /// Which means that TPFValue needs to get its own processor instead.
+    /// Its okay to keep the constructor parameters part of TPFValue here, since the inheritance thing only applies to class fields anwyways.
     //Make sure that a TPFNode can't also be marked as a resource.
     @Override
     public Set<String> getSupportedAnnotationTypes(){
-        return Set.of("org.treepluginframework.annotations.TPFConstructor","org.treepluginframework.annotations.TPFNode","org.treepluginframework.annotations.TPFResource","org.treepluginframework.annotations.TPFValue","org.treepluginframework.annotations.TPFPrimary","org.treepluginframework.annotations.TPFQualifier");
+        return Set.of("org.treepluginframework.annotations.TPFConstructor","org.treepluginframework.annotations.TPFNode","org.treepluginframework.annotations.TPFResource","org.treepluginframework.annotations.TPFPrimary","org.treepluginframework.annotations.TPFQualifier");
     }
 
     private boolean preventNodeAndResourceAnnotation(List<Element> tpfElements){
@@ -81,91 +84,6 @@ public class TPFNodeProcessor extends AbstractProcessor {
                 */
             }
         }
-    }
-
-
-    //Constructor can see if this method already handled it for that class, and just skip that parameter.
-    //The errorOccurred stuff is just so that all bad TPFValue annotations are taken care of immediately.
-    private boolean handleTPFValue(HashMap<TypeElement, ClassValueMetadata> allClassData, Set<VariableElement> usedVariables, Set<String> globalValueLocations, HashMap<String,HashSet<String>> configValueLocations, RoundEnvironment roundEnv){
-        //Check the values first, and translate if necessary.
-        //I store an executable hashmap?
-        List<Element> valueVariables = new ArrayList<>(roundEnv.getElementsAnnotatedWith(TPFValue.class));
-        boolean errorOccurred = false;
-        if(!valueVariables.isEmpty()){
-            HashMap<ExecutableElement, String> constructorSignatures = new HashMap<>();
-
-            for(Element elem : valueVariables) {
-                boolean isParameter = (elem.getEnclosingElement().getKind() == ElementKind.CONSTRUCTOR);
-                VariableElement variableElement = (VariableElement) elem;
-                TypeMirror varType = variableElement.asType();
-
-                Element current = variableElement;
-                while (current != null && !(current.getKind().isClass() || current.getKind().isInterface())) {
-                    current = current.getEnclosingElement();
-                }
-                TypeElement owningClass = (TypeElement) current;
-                System.out.println("TPFValue in class " + owningClass.getQualifiedName());
-
-                ClassValueMetadata classData = allClassData.computeIfAbsent(owningClass, k -> new ClassValueMetadata());
-                TPFValue valueAnnotation = variableElement.getAnnotation(TPFValue.class);
-
-
-                if(valueAnnotation.location().isEmpty() || valueAnnotation.location().isBlank()){
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "TPFValue annotations must provide a location", elem);
-                    errorOccurred = true;
-                }
-
-                String type = getQualifiedTypeName(varType, processingEnv.getTypeUtils());
-
-                System.out.println(owningClass.getQualifiedName() + ": " + variableElement.getSimpleName() + " IsParameter: " + isParameter);
-                if(isParameter){
-                    //I need to get the Method signature of this executable.
-                    ExecutableElement constructor = (ExecutableElement) variableElement.getEnclosingElement();
-                    if(!constructorSignatures.containsKey(constructor))
-                    {
-                        String constructorSig = constructorSignatures.computeIfAbsent(constructor, c ->
-                                c.getParameters().stream()
-                                        .map(param -> "(" + param.asType().toString() + ")")
-                                        .collect(Collectors.joining(",", "[", "]"))
-                        );
-                        constructorSignatures.put(constructor, constructorSig);
-                    }
-
-                    String constructorSig = constructorSignatures.get(constructor);
-                    List<ParameterValueInfo> paramInfo = classData.parameters.computeIfAbsent(constructorSig, k -> new ArrayList<>());
-
-                    List<? extends VariableElement> params = constructor.getParameters();
-
-                    // Find the index of the parameter in the constructor's parameter list
-                    int positionInConstructor = -1;
-                    for (int i = 0; i < params.size(); i++) {
-                        if (params.get(i).equals(variableElement)) {
-                            positionInConstructor = i;
-                            break;
-                        }
-                    }
-
-                    paramInfo.add(new ParameterValueInfo(type, valueAnnotation.location(), valueAnnotation.defaultValue(), positionInConstructor));
-                }
-                else
-                {
-                    //If the fileName is not empty?
-                    classData.fields.put(variableElement.getSimpleName().toString(), new FieldValueInfo(type, valueAnnotation.fileName(), valueAnnotation.location(), valueAnnotation.defaultValue()));
-                }
-                //depends
-                if(valueAnnotation.fileName().isEmpty()){
-                    globalValueLocations.add(valueAnnotation.location());
-
-                }
-                else
-                {
-                    configValueLocations.computeIfAbsent(valueAnnotation.fileName(), k-> new HashSet<>()).add(valueAnnotation.location());
-                }
-                usedVariables.add(variableElement);
-            }
-        }
-
-        return errorOccurred;
     }
 
     private boolean handleAliases(List<Element> tpfComponents, HashMap<String,TypeElement> aliases){
@@ -301,6 +219,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
                 errorOccurred = true;
                 continue;
             }
+
             if(isInterface){
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Specified class must be a concrete implementation, got Interface " + classToCompare.getQualifiedName() + " instead.", elem);
                 errorOccurred = true;
@@ -323,7 +242,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
         return errorOccurred;
     }
 
-    private boolean handleTPFConstructors(List<Element> tpfComponents, HashMap<TypeElement, ConstructorInformation> constructorInformation, Set<VariableElement> tpfValueElements, HashMap<VariableElement, TypeElement> qualifierClassTranslations, HashMap<TypeElement, List<TypeElement>> adjacencyList){
+    private boolean handleTPFConstructors(List<Element> tpfComponents, HashMap<TypeElement, ConstructorInformation> constructorInformation, HashMap<VariableElement, TypeElement> qualifierClassTranslations, HashMap<TypeElement, List<TypeElement>> adjacencyList){
         if(tpfComponents.isEmpty()){
             return false;
         }
@@ -415,7 +334,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
                     //TPFValue already handled this variable
                     //Prevents having to recheck that logic here.
                     //From this point on, if this parameter is a primitive, call an error.
-                    if(tpfValueElements.contains(parameter)){
+                    if(parameter.getAnnotation(TPFValue.class) != null){
                         desiredParameterTypes.add(typeName);
                         continue;
                     }
@@ -569,12 +488,12 @@ public class TPFNodeProcessor extends AbstractProcessor {
         return errorOccurred;
     }
 
-    private TPFMetadataFile findTPFValuesFile(){
+    private TPFStructureFile findTPFValuesFile(){
         try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/metadata.json")) {
+                .getResourceAsStream("META-INF/tpf/structure.json")) {
             if (is != null) {
                 ObjectMapper mapper = new ObjectMapper();
-                TPFMetadataFile metaFile = mapper.readValue(is, TPFMetadataFile.class);
+                TPFStructureFile metaFile = mapper.readValue(is, TPFStructureFile.class);
                 return metaFile;
             }
         } catch (IOException e) {
@@ -584,10 +503,10 @@ public class TPFNodeProcessor extends AbstractProcessor {
         return null;
     }
 
-    private void writeTPFFile(TPFMetadataFile metaFile){
+    private void writeTPFFile(TPFStructureFile metaFile){
         try {
             // Create resource file under META-INF/tpf/
-            FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/metadata.json");
+            FileObject file = filer.createResource(StandardLocation.CLASS_OUTPUT, "", "META-INF/tpf/structure.json");
             try (Writer writer = file.openWriter()) {
                 // Serialize your object to JSON string (using Jackson or Gson)
                 ObjectMapper mapper = new ObjectMapper();
@@ -615,9 +534,6 @@ public class TPFNodeProcessor extends AbstractProcessor {
 
         tpfComponents.addAll(nodeElements);
         tpfComponents.addAll(resourceElements);
-
-        List<Element> valueElements = new ArrayList<>(roundEnv.getElementsAnnotatedWith(TPFValue.class));
-
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,"TPF Component Count: " + tpfComponents.size());
 
 
@@ -625,7 +541,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,"\t"+resourceElements.toString());
 
         //TODO: Doesn't account for TPFValue or other annotations, take care here.
-        if(tpfComponents.isEmpty() && valueElements.isEmpty()){
+        if(tpfComponents.isEmpty()){
             return false;
         }
 
@@ -642,16 +558,6 @@ public class TPFNodeProcessor extends AbstractProcessor {
             return true;
         }
 
-        HashMap<TypeElement, ClassValueMetadata> allClassData = new HashMap<>();
-
-        Set<VariableElement> tpfValueVariables = new HashSet<>();
-        HashSet<String> globalValueLocations = new HashSet<>();
-        HashMap<String,HashSet<String>> configFileLocations = new HashMap<>();
-        boolean tpfValueErrorOccurred = handleTPFValue(allClassData,tpfValueVariables, globalValueLocations, configFileLocations, roundEnv);
-
-        if(tpfValueErrorOccurred){
-            return true;
-        }
 
         //HashMap<String,TypeElement> aliases, HashMap<VariableElement, TypeElement> qualifierClassTranslations,RoundEnvironment round
         HashMap<VariableElement, TypeElement> qualifierClassTranslations = new HashMap<>();
@@ -663,7 +569,7 @@ public class TPFNodeProcessor extends AbstractProcessor {
 
         HashMap<TypeElement,List<TypeElement>> adjacencyList = new HashMap<>();
         HashMap<TypeElement,ConstructorInformation> constructorInformation = new LinkedHashMap<>();
-        boolean constructorErrorOccurred = handleTPFConstructors(tpfComponents, constructorInformation,  tpfValueVariables, qualifierClassTranslations, adjacencyList);
+        boolean constructorErrorOccurred = handleTPFConstructors(tpfComponents, constructorInformation, qualifierClassTranslations, adjacencyList);
 
         if(constructorErrorOccurred){
             return true;
@@ -690,21 +596,22 @@ public class TPFNodeProcessor extends AbstractProcessor {
         else
         {
             System.out.println("Options for sorting: " + sortResult.sortedList.size());
-            HashMap<String, ClassValueMetadata> valueInformation = new HashMap<>();
             LinkedHashMap<String, ConstructorInformation> constructorCreationOrder = new LinkedHashMap<>();
 
             Collections.reverse(sortResult.sortedList);
-
-            for(TypeElement key : allClassData.keySet())
-            {
-                valueInformation.put(toRuntimeClassName(key, processingEnv.getElementUtils()), allClassData.get(key));
-            }
 
             for(TypeElement clazz : sortResult.sortedList){
                 constructorCreationOrder.put(toRuntimeClassName(clazz, processingEnv.getElementUtils()), constructorInformation.get(clazz));
             }
 
-            TPFMetadataFile metaFile = new TPFMetadataFile(valueInformation, constructorCreationOrder, globalValueLocations, configFileLocations);
+            HashMap<String,String> finalizedAliases = new HashMap<>();
+            for(String alias : aliases.keySet()){
+                TypeElement correspondingClass = aliases.get(alias);
+                String trueName = Utilities.toRuntimeClassName(correspondingClass, processingEnv.getElementUtils());
+                finalizedAliases.put(alias,trueName);
+            }
+
+            TPFStructureFile metaFile = new TPFStructureFile(constructorCreationOrder, finalizedAliases);
             //Serialize this metaFile now.
             writeTPFFile(metaFile);
         }

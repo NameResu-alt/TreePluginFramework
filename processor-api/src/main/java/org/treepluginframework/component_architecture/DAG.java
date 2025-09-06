@@ -5,13 +5,13 @@ import com.google.common.collect.HashBiMap;
 
 import java.util.*;
 
-public class DAG {
+public class DAG<T> {
     //IdentityHashMap since I have to check for references instead of .equals() instead.
-    private final Map<Object, Set<Object>> adjList = new IdentityHashMap<>();
-    private final Map<Object, Set<Object>> reverseAdjList = new IdentityHashMap<>();
-    private final BiMap<UUID,Object> dagUUIDs = HashBiMap.create();
+    private final Map<T, Set<T>> adjList = new IdentityHashMap<>();
+    private final Map<T, Set<T>> reverseAdjList = new IdentityHashMap<>();
+    private final BiMap<UUID,T> dagUUIDs = HashBiMap.create();
 
-    public void addNode(Object node) {
+    public void addNode(T node) {
         if (node == null) throw new IllegalArgumentException("Node cannot be null");
         if(!adjList.containsKey(node)){
             UUID rand = UUID.randomUUID();
@@ -24,7 +24,7 @@ public class DAG {
         reverseAdjList.putIfAbsent(node, new HashSet<>());
     }
 
-    public void addEdge(Object from, Object to) {
+    public void addEdge(T from, T to) {
         if (to == null) {
             throw new IllegalArgumentException("Destination of edge cannot be null");
         }
@@ -44,7 +44,7 @@ public class DAG {
     }
 
 
-    public boolean removeEdge(Object from, Object to) {
+    public boolean removeEdge(T from, T to) {
         boolean removed = false;
         if (adjList.containsKey(from)) {
             removed |= adjList.get(from).remove(to);
@@ -55,15 +55,15 @@ public class DAG {
         return removed;
     }
 
-    public Set<Object> getChildren(Object node) {
+    public Set<T> getChildren(T node) {
         return Collections.unmodifiableSet(adjList.getOrDefault(node, Collections.emptySet()));
     }
 
-    public Set<Object> getParents(Object node) {
+    public Set<T> getParents(T node) {
         return Collections.unmodifiableSet(reverseAdjList.getOrDefault(node, Collections.emptySet()));
     }
 
-    public boolean removeNode(Object node) {
+    public boolean removeNode(T node) {
         boolean existed = adjList.containsKey(node) || reverseAdjList.containsKey(node);
 
         if(dagUUIDs.containsValue(node)){
@@ -72,17 +72,17 @@ public class DAG {
         }
 
         // Remove all outgoing edges from this node
-        Set<Object> children = adjList.remove(node);
+        Set<T> children = adjList.remove(node);
         if (children != null) {
-            for (Object child : children) {
+            for (T child : children) {
                 reverseAdjList.get(child).remove(node);
             }
         }
 
         // Remove all incoming edges to this node
-        Set<Object> parents = reverseAdjList.remove(node);
+        Set<T> parents = reverseAdjList.remove(node);
         if (parents != null) {
-            for (Object parent : parents) {
+            for (T parent : parents) {
                 adjList.get(parent).remove(node);
             }
         }
@@ -90,14 +90,14 @@ public class DAG {
         return existed;
     }
 
-    private boolean createsCycle(Object from, Object to) {
+    private boolean createsCycle(T from, T to) {
         // Check if there is a path from 'to' to 'from'
-        Set<Object> visited = new HashSet<>();
-        Deque<Object> stack = new ArrayDeque<>();
+        Set<T> visited = new HashSet<>();
+        Deque<T> stack = new ArrayDeque<>();
         stack.push(to);
 
         while (!stack.isEmpty()) {
-            Object current = stack.pop();
+            T current = stack.pop();
             if (current.equals(from)) return true;
             if (visited.add(current)) {
                 stack.addAll(adjList.getOrDefault(current, Collections.emptySet()));
@@ -106,11 +106,11 @@ public class DAG {
         return false;
     }
 
-    public boolean containsNode(Object node) {
+    public boolean containsNode(T node) {
         return adjList.containsKey(node);
     }
 
-    public Set<Object> getAllNodes() {
+    public Set<T> getAllNodes() {
         return Collections.unmodifiableSet(adjList.keySet());
     }
 
@@ -126,12 +126,12 @@ public class DAG {
         }
     }
 
-    public void printFrom(Object node) {
-        Set<Object> visited = new HashSet<>();
+    public void printFrom(T node) {
+        Set<T> visited = new HashSet<>();
         printFromHelper(node, 0);
     }
 
-    private void printFromHelper(Object node, int depth) {
+    private void printFromHelper(T node, int depth) {
         if (node == null) {
             return;
         }
@@ -140,9 +140,20 @@ public class DAG {
         System.out.println("\t".repeat(depth) + node.toString());
 
         // Recurse on children (dependencies)
-        Set<Object> children = adjList.getOrDefault(node, Collections.emptySet());
-        for (Object child : children) {
+        Set<T> children = adjList.getOrDefault(node, Collections.emptySet());
+        for (T child : children) {
             printFromHelper(child, depth+1);
         }
+    }
+
+    public List<T> getRoots(){
+        List<T> roots = new ArrayList<>();
+
+        for(T node : adjList.keySet()){
+            if(!reverseAdjList.containsKey(node) || reverseAdjList.get(node).isEmpty()){
+                roots.add(node);
+            }
+        }
+        return roots;
     }
 }

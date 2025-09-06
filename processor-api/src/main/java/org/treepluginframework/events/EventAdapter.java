@@ -17,6 +17,7 @@ public abstract class EventAdapter<T> {
         this.event = event;
     }
 
+    //EndPoint is wherever this EventAdapter is supposed to stop
     public EventAdapter(T event, Class<?> endpoint){this.event = event; this.endpoint = endpoint;}
 
     public T getEvent() {

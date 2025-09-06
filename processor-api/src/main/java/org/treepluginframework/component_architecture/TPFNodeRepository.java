@@ -1,9 +1,6 @@
 package org.treepluginframework.component_architecture;
 
-import org.treepluginframework.values.ClassValueMetadata;
-import org.treepluginframework.values.ConstructorInformation;
-import org.treepluginframework.values.ParameterValueInfo;
-import org.treepluginframework.values.TPFMetadataFile;
+import org.treepluginframework.values.*;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -28,20 +25,19 @@ public class TPFNodeRepository {
 
     //Assumption is that if there's a node, then there's only 1 of that class.
     Map<Class<?>,Object> nodes = new HashMap<>();
-    //Same thing here.
-    Map<Class<?>, Object> resources = new HashMap<>();
 
     private Map<Class<?>, Constructor<?>> constructorCache = new HashMap<>();
 
     private TPFValueRepository valueRepository;
-    private TPFMetadataFile metadataFile;
-
+    private TPFStructureFile metadataFile;
+    private TPFValueFile valueFile;
     private TPF mainTPF;
 
-    public TPFNodeRepository(TPF mainTPF, TPFValueRepository valueRepository, TPFMetadataFile metadataFile){
+    public TPFNodeRepository(TPF mainTPF, TPFValueRepository valueRepository, TPFStructureFile metadataFile, TPFValueFile valueFile){
         this.mainTPF = mainTPF;
         this.valueRepository = valueRepository;
         this.metadataFile = metadataFile;
+        this.valueFile = valueFile;
     }
 
     public <T> T getNode(Class<T> classType){
@@ -49,6 +45,9 @@ public class TPFNodeRepository {
     }
 
 
+    /*
+        This is broke for now.
+     */
     public void generateNodesAndResourcesV2(){
         //LinkedHashMap<String, ClassValueMetadata> createOrder = (LinkedHashMap<String, ClassValueMetadata>) metadataFile.classes;
         LinkedHashMap<String,ConstructorInformation> createOrder = metadataFile.constructorInformation;
@@ -57,7 +56,8 @@ public class TPFNodeRepository {
         metadataFile.printMetadataFile();
         for(String qualifiedClassName : createOrder.keySet()){
             ConstructorInformation constructorInfo = metadataFile.constructorInformation.get(qualifiedClassName);
-            ClassValueMetadata classData = metadataFile.classes.getOrDefault(qualifiedClassName, null);
+            ClassValueMetadataV2 classData2 = valueFile.classData.getOrDefault(qualifiedClassName, null);
+
 
             Class<?> wantedClass = null;
             try {
@@ -66,27 +66,29 @@ public class TPFNodeRepository {
                 throw new RuntimeException(e);
             }
 
-            System.out.println("Current Class: " + qualifiedClassName);
+            System.out.println("\n\n////Current Class: " + qualifiedClassName);
 
             Class<?>[] neededConstructorParams = getParameters(constructorInfo.neededConstructorParameters);
             Class<?>[] desiredConstructorParams = getParameters(constructorInfo.desiredConstructorParameters);
 
             Constructor<?> matchingConstructor = findConstructor(wantedClass, neededConstructorParams);
 
-            String constructorSig = Arrays.stream(neededConstructorParams)
+            /*String constructorSig = Arrays.stream(neededConstructorParams)
                     .map(paramClass -> "(" + paramClass.getCanonicalName() + ")")
                     .collect(Collectors.joining(",", "[", "]"));
+            */
+            String constructorSig = Arrays.stream(neededConstructorParams)
+                    .map(Class::getCanonicalName)
+                            .collect(Collectors.joining(",","[","]"));
 
-            List<ParameterValueInfo> tpfValueParameters = (classData != null) ? classData.parameters.getOrDefault(constructorSig, null) : null;
-            ParameterValueInfo[] mappedValues = new ParameterValueInfo[neededConstructorParams.length];
-            if(tpfValueParameters != null){
-                for(ParameterValueInfo inf : tpfValueParameters){
-                    mappedValues[inf.positionInConstructor] = inf;
-                }
-            }
 
+            HashMap<Integer,VariableValueInfoV2> parameterValueInfo = (classData2 != null) ? classData2.constructors.getOrDefault(constructorSig,new HashMap<>()) : new HashMap<>();
+
+            System.out.println("Info from class Data: " + parameterValueInfo);
+            //classData2.constructors.getOrDefault(construtor)
             Object[] params = new Object[neededConstructorParams.length];
 
+            HashMap<String, TPFValueRepository.FileValueRequest> fileRequests = new HashMap<>();
             for(int i = 0; i<params.length;i++){
                 Class<?> classOfCurrentParameter = desiredConstructorParams[i];
                 //Okay, parameters don't retain their name, so I can't do it that way.
@@ -97,15 +99,31 @@ public class TPFNodeRepository {
                     continue;
                 }
 
-                if(mappedValues[i] != null){
-                    ParameterValueInfo inf = mappedValues[i];
-                    params[i] = valueRepository.getGlobalValue(inf.location, classOfCurrentParameter);
-                    if(params[i] == null){
-                        params[i] = TPFValueRepository.convertStringToType(inf.defaultValue,classOfCurrentParameter);
+                if(parameterValueInfo.containsKey(i)){
+                    VariableValueInfoV2 inf = parameterValueInfo.get(i);
+                    if(inf.fileName.isBlank()){
+                        //Global one, simple enough.
+                        params[i] = valueRepository.getGlobalValue(inf.location, classOfCurrentParameter);
                     }
+                    else
+                    {
+                        TPFValueRepository.FileValueRequest request = fileRequests.computeIfAbsent(inf.fileName,k-> new TPFValueRepository.FileValueRequest(k));
+                        final int copy = i;
+                        System.out.println(inf.fileName + " " + inf.location + " " + classOfCurrentParameter);
+                        request.addWantedValue(inf.location, classOfCurrentParameter, new TPFValueRepository.FileValueCallback() {
+                            @Override
+                            public void valueReceived(Object value) {
+                                params[copy] = value;
+                                System.out.println("Got the value: " + value);
+                            }
 
-                    if(params[i] == null){
-                        throw new RuntimeException("Unable to find the value at location " + inf.location +" and Unable to convert the default value " + inf.defaultValue + " to the type " + classOfCurrentParameter.getCanonicalName());
+                            @Override
+                            public void failedToFindValue() {
+                                params[copy] = TPFValueRepository.convertStringToType(inf.defaultValue,classOfCurrentParameter);
+                                System.out.println("Didn't get the value: " + params[copy]);
+                            }
+                        });
+
                     }
                 }
                 else
@@ -114,12 +132,15 @@ public class TPFNodeRepository {
                 }
             }
 
+            for(TPFValueRepository.FileValueRequest req : fileRequests.values()){
+                valueRepository.getFileValues(req);
+            }
 
             System.out.println("\tParams: " + Arrays.toString(params));
 
             try {
                 System.out.println("Wanted class: " + wantedClass.getCanonicalName());
-                System.out.println(Arrays.toString(params));
+                //System.out.println(Arrays.toString(params));
                 System.out.println("Check Args: " + constructorSig);
                 Object newObj = matchingConstructor.newInstance(params);
                 nodes.put(wantedClass, newObj);
@@ -128,6 +149,7 @@ public class TPFNodeRepository {
                 throw new RuntimeException(e);
             }
             constructorCache.put(wantedClass, matchingConstructor);
+            System.out.println("\tDone with " + wantedClass);
         }
     }
 

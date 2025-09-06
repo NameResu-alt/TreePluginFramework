@@ -3,9 +3,11 @@ package org.treepluginframework.component_architecture;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.treepluginframework.hooks.TPFEventLog;
 import org.treepluginframework.values.TPFEventFile;
-import org.treepluginframework.values.TPFMetadataFile;
+import org.treepluginframework.values.TPFStructureFile;
+import org.treepluginframework.values.TPFValueFile;
 
 import java.io.*;
+import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -15,12 +17,15 @@ public class TPF {
     private TPFValueRepository valueRepository;
     private TPFEventDispatcher eventDispatcher;
 
-    private TPFMetadataFile metadataFile;
+    private TPFStructureFile structureFile;
+    private TPFValueFile valueFile;
     private TPFEventFile eventFile;
 
     private static final Logger logger = Logger.getLogger(TPF.class.getName());
 
     private UUID tpfUUID = UUID.randomUUID();
+
+    private HashMap<Class<?>,Object> loggers = new HashMap<>();
 
 
     public TPF(File globalConfigurationFile){
@@ -49,17 +54,15 @@ public class TPF {
      */
 
     public void addConfigurationFile(File file){
-
+        this.valueRepository.addConfigurationFile(file);
     }
 
-
-
-
     private void setup(File configurationFile) {
-        this.metadataFile = findTPFValuesFile();
+        this.valueFile = findTPFValuesFile();
+        this.structureFile = findTPFStructureFile();
         this.eventFile = findTPFEventFile();
 
-        boolean hasMetadata = metadataFile != null;
+        boolean hasMetadata = structureFile != null;
         boolean hasEvent = eventFile != null;
 
         if (!hasMetadata && !hasEvent) {
@@ -73,24 +76,24 @@ public class TPF {
         }
 
         this.eventDispatcher = new TPFEventDispatcher(
-                hasMetadata ? metadataFile : null,
+                hasMetadata ? structureFile : null,
                 hasEvent ? eventFile : null,
                 hasMetadata ? nodeRepository : null
         );
     }
 
     private void setupMetadataRelatedComponents(File configurationFile) {
-        this.valueRepository = new TPFValueRepository(this.metadataFile);
+        this.valueRepository = new TPFValueRepository(this.valueFile);
         if(configurationFile != null){
             valueRepository.addGlobalConfigurationFile(configurationFile);
         }
 
-        this.nodeRepository = new TPFNodeRepository(this, valueRepository, metadataFile);
+        this.nodeRepository = new TPFNodeRepository(this, valueRepository, structureFile, this.valueFile);
     }
 
 
     public void start(){
-        if(this.metadataFile == null){
+        if(this.structureFile == null){
             logger.warning("There is no TPF META-INF file present, can't utilize TPF system.");
         }
         else
@@ -122,12 +125,12 @@ public class TPF {
         return null;
     }
 
-    private TPFMetadataFile findTPFValuesFile(){
+    private TPFValueFile findTPFValuesFile(){
         try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/metadata.json")) {
+                .getResourceAsStream("META-INF/tpf/value.json")) {
             if (is != null) {
                 ObjectMapper mapper = new ObjectMapper();
-                TPFMetadataFile metaFile = mapper.readValue(is, TPFMetadataFile.class);
+                TPFValueFile metaFile = mapper.readValue(is, TPFValueFile.class);
                 return metaFile;
             }
         } catch (IOException e) {
@@ -137,7 +140,22 @@ public class TPF {
         return null;
     }
 
-    public void injectValues(Object ob){
+    private TPFStructureFile findTPFStructureFile(){
+        try(InputStream is = TPF.class.getClassLoader()
+                .getResourceAsStream("META-INF/tpf/structure.json")) {
+            if (is != null) {
+                ObjectMapper mapper = new ObjectMapper();
+                TPFStructureFile metaFile = mapper.readValue(is, TPFStructureFile.class);
+                return metaFile;
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        return null;
+    }
+
+    public void injectFieldValues(Object ob){
         this.valueRepository.injectFields(ob);
     }
 

@@ -12,6 +12,7 @@
         <module>processor-api</module>
         <module>processor</module>
         <module>test-project</module>
+        <module>core</module>
     </modules>
 
     <properties>

@@ -11,6 +11,7 @@ import java.util.*;
 //Then I should record what types I shoudl actually be providing to those parameters.
 
 //This will make it easier to find the constructor, and then simple to just plug stuff in.
+@Deprecated
 public class ClassValueMetadata {
     //Parameters and fields holds the TPFValues.
     //For fields, its simple since there can ever only be 1 field of that name in a class.

@@ -1,4 +1,4 @@
 package org.treepluginframework;
 
-public class TickEvent {
+public class TickEvent implements InterfaceEvent{
 }

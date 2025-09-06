@@ -8,7 +8,25 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface EventSubscription {
+    /***
+     When multiple methods have the same method, priority determines the order in which the methods are ran. Ignored if not the case.
+     * Necessary if multiple methods use the same event.
+     * Higher priority methods come first in execution
+     * @return
+     */
     int priority() default 0;
-    //Without useSuperClasses, it's only going to look for that exact method.
-    boolean useSuperClasses() default false;
+
+    /***
+     * Whether or not the method can accept SubClasses of the stated event type.
+     * For abstract classes, this is automatically set to true
+     * @return boolean
+     */
+    boolean useSubClasses() default false;
+
+    /***
+     * If a method expects an adapter type that is incompatible with the adapter accompanying the event, the method will be skipped.
+     * When this flag is true, the framework will log a warning indicating the mismatch; when false, the method is silently ignored.
+     * @return
+     */
+    boolean notifyOnAdapterMismatch() default true;
 }

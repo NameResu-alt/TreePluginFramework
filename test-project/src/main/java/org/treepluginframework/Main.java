@@ -1,11 +1,12 @@
 package org.treepluginframework;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.treepluginframework.component_architecture.TPF;
 import org.treepluginframework.component_architecture.TPFValueRepository;
 
 import java.io.File;
 import java.util.HashMap;
-import java.util.HashSet;
 
 public class Main {
     public static void main(String[] args)
@@ -24,14 +25,33 @@ public class Main {
         TickEventAdapter adapter = new TickEventAdapter(testEvent);
 
         EventEntryPoint entry = check.getNodeRepository().getNode(EventEntryPoint.class);
-        check.getEventDispatcher().emit(entry, adapter);
-        check.getEventDispatcher().emit(entry, adapter);
-        check.getEventDispatcher().emit(entry, adapter);
-        HashMap<String,Class<?>> testingValues = new HashMap<>();
-        testingValues.put("scout",String.class);
 
-        HashMap<String, Object> result = check.getValueRepository().getFileValues(new TPFValueRepository.FileValueRequest("kitpvp.yml", testingValues));
-        System.out.println("Have Scout key: " + result.containsKey("scout"));
+        System.out.println("Dispatcher Check: " + (entry == null));
+        check.getEventDispatcher().emit(entry, adapter);
+        check.getEventDispatcher().emit(entry, adapter);
+        check.getEventDispatcher().emit(entry, adapter);
 
+        TPFValueRepository.FileValueRequest request = new TPFValueRepository.FileValueRequest("kitpvp.yml");
+        request.addWantedValue("scout",String.class,null);
+        request.addWantedValue("scout",Integer.class,null);
+        request.addWantedValue("person",TestJson.class,null);
+        check.getValueRepository().getFileValues(request);
+        String stringScoutVal = request.getValue("scout",String.class);
+        Integer intScoutVal = request.getValue("scout", Integer.class);
+        System.out.println("Scout Value: " + stringScoutVal + " " + intScoutVal);
+        //HashMap<String, Object> result = check.getValueRepository().getFileValues(new TPFValueRepository.FileValueRequest("kitpvp.yml", testingValues));
+        //System.out.println("Have Scout key: " + result.containsKey("scout"));
+        //if(result.containsKey())
+        TestJson checkIfExists = request.getValue("person",TestJson.class);
+        System.out.println("Test: " + checkIfExists);
+        /*
+        ObjectMapper map = new ObjectMapper();
+        try {
+            String test = map.writerWithDefaultPrettyPrinter().writeValueAsString(new TestJson("Ricardo",23,true));
+            System.out.println(test);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+         */
     }
 }
