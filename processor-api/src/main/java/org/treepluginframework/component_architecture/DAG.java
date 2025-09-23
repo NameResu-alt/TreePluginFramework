@@ -4,12 +4,46 @@ import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 public class DAG<T> {
-    //IdentityHashMap since I have to check for references instead of .equals() instead.
-    private final Map<T, Set<T>> adjList = new IdentityHashMap<>();
-    private final Map<T, Set<T>> reverseAdjList = new IdentityHashMap<>();
+    private final Map<T, LinkedHashSet<T>> adjList;
+    private final Map<T, LinkedHashSet<T>> reverseAdjList;
     private final BiMap<UUID,T> dagUUIDs = HashBiMap.create();
+
+    private DAG(Supplier<Map<T, LinkedHashSet<T>>> mapSupplier) {
+        this.adjList = mapSupplier.get();
+        this.reverseAdjList = mapSupplier.get();
+    }
+
+    /***
+     * DAG implementation will use a Identity HashMap for its edges
+     * @return
+     * @param <T>
+     */
+    public static <T> DAG<T> identity() {
+        return new DAG<>(IdentityHashMap::new);
+    }
+
+    /***
+     * DAG implementation will use a regular HashMap for its edges
+     * @return
+     * @param <T>
+     */
+    public static <T> DAG<T> regular() {
+        return new DAG<>(HashMap::new);
+    }
+
+    /***
+     * DAG implementation will use a Concurrent HashMap for its edges
+     * @return
+     * @param <T>
+     */
+
+    public static <T> DAG<T> concurrent() {
+        return new DAG<>(ConcurrentHashMap::new);
+    }
 
     public void addNode(T node) {
         if (node == null) throw new IllegalArgumentException("Node cannot be null");
@@ -20,17 +54,27 @@ public class DAG<T> {
             }
             dagUUIDs.put(rand, node);
         }
-        adjList.putIfAbsent(node, new HashSet<>());
-        reverseAdjList.putIfAbsent(node, new HashSet<>());
+        adjList.putIfAbsent(node, new LinkedHashSet<>());
+        reverseAdjList.putIfAbsent(node, new LinkedHashSet<>());
     }
 
-    public void addEdge(T from, T to) {
+    /***
+     * Add an edge to the DAG. If to is null, or if the edge would create a cycle, throws an exception.
+     * @param from
+     * @param to
+     * @return True if the edge was added, false if edge already exists.
+     */
+    public boolean addEdge(T from, T to) {
         if (to == null) {
             throw new IllegalArgumentException("Destination of edge cannot be null");
         }
 
         if (from != null && createsCycle(from, to)) {
             throw new IllegalArgumentException("Adding edge from " + from + " to " + to + " would create a cycle.");
+        }
+
+        if(adjList.containsKey(from) && adjList.get(from).contains(to)){
+            return false;
         }
 
         addNode(to);
@@ -40,6 +84,8 @@ public class DAG<T> {
             adjList.get(from).add(to);
             reverseAdjList.get(to).add(from);
         }
+
+        return true;
         // else: root node — no parent edge needed, just leave it in the graph
     }
 
@@ -55,12 +101,12 @@ public class DAG<T> {
         return removed;
     }
 
-    public Set<T> getChildren(T node) {
-        return Collections.unmodifiableSet(adjList.getOrDefault(node, Collections.emptySet()));
+    public LinkedHashSet<T> getChildren(T node) {
+        return new LinkedHashSet<>(adjList.getOrDefault(node, new LinkedHashSet<>()));
     }
 
-    public Set<T> getParents(T node) {
-        return Collections.unmodifiableSet(reverseAdjList.getOrDefault(node, Collections.emptySet()));
+    public LinkedHashSet<T> getParents(T node) {
+        return new LinkedHashSet<>(reverseAdjList.getOrDefault(node, new LinkedHashSet<>()));
     }
 
     public boolean removeNode(T node) {
@@ -100,7 +146,7 @@ public class DAG<T> {
             T current = stack.pop();
             if (current.equals(from)) return true;
             if (visited.add(current)) {
-                stack.addAll(adjList.getOrDefault(current, Collections.emptySet()));
+                stack.addAll(adjList.getOrDefault(current, new LinkedHashSet<>()));
             }
         }
         return false;
@@ -140,7 +186,7 @@ public class DAG<T> {
         System.out.println("\t".repeat(depth) + node.toString());
 
         // Recurse on children (dependencies)
-        Set<T> children = adjList.getOrDefault(node, Collections.emptySet());
+        Set<T> children = adjList.getOrDefault(node, new LinkedHashSet<>());
         for (T child : children) {
             printFromHelper(child, depth+1);
         }

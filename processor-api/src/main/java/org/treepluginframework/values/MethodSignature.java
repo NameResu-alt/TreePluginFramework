@@ -51,12 +51,14 @@ public class MethodSignature {
             }
         }
 
-        return true;
+        /// TODO: Verify that this is supposed to be !isPrivate, and not just true.
+        return !isPrivate;
+        //return true;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(methodName, parameterTypes);
+        return Objects.hash(methodName, parameterTypes,isPrivate);
     }
 
     @Override

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.util.Objects;
 
-public class VariableValueInfoV2 {
+public class VariableValueInfo {
     @JsonIgnore
     public String originClass;
     @JsonIgnore
@@ -16,11 +16,11 @@ public class VariableValueInfoV2 {
     //Private variables will still be part of the child class, they can't be shadowed.
     public boolean isPrivate;
 
-    public VariableValueInfoV2(){
+    public VariableValueInfo(){
 
     }
 
-    public VariableValueInfoV2(String originClass,String fieldName, String type, String fileName, String location, String s, boolean isPrivate) {
+    public VariableValueInfo(String originClass, String fieldName, String type, String fileName, String location, String s, boolean isPrivate) {
         this.originClass = originClass;
         this.fieldName = fieldName;
         this.type = type;
@@ -32,7 +32,7 @@ public class VariableValueInfoV2 {
 
     @Override
     public boolean equals(Object other){
-        if(!(other instanceof VariableValueInfoV2 compare)) return false;
+        if(!(other instanceof VariableValueInfo compare)) return false;
 
         if(!fieldName.equals(compare.fieldName)) return false;
 

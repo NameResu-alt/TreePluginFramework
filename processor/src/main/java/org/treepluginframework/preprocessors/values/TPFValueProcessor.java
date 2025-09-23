@@ -5,10 +5,9 @@ import com.google.auto.service.AutoService;
 import org.treepluginframework.annotations.TPFValue;
 import org.treepluginframework.component_architecture.DAG;
 import org.treepluginframework.preprocessors.Utilities;
-import org.treepluginframework.values.ClassValueMetadataV2;
-import org.treepluginframework.values.TPFEventFile;
+import org.treepluginframework.values.ClassValueMetadata;
 import org.treepluginframework.values.TPFValueFile;
-import org.treepluginframework.values.VariableValueInfoV2;
+import org.treepluginframework.values.VariableValueInfo;
 
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
@@ -72,7 +71,7 @@ public class TPFValueProcessor extends AbstractProcessor {
             TPFValueFile mergedFile = findPreviousValueFiles();
 
 
-            DAG<TypeElement> dag = new DAG<>();
+            DAG<TypeElement> dag = DAG.regular();//new DAG<>();
             Types typeUtils = processingEnv.getTypeUtils();
             for(TypeElement type : allTypes){
 
@@ -99,9 +98,9 @@ public class TPFValueProcessor extends AbstractProcessor {
             dag.printGraph();
 
             //Class, originClass, fieldname, fieldInfo.
-            HashMap<FieldKey, VariableValueInfoV2> classFields = new HashMap<>();
+            HashMap<FieldKey, VariableValueInfo> classFields = new HashMap<>();
             //Class, Constructor Signature, Position in Constructor, FieldInfo
-            HashMap<ParameterKey, VariableValueInfoV2> classConstructors = new HashMap<>();
+            HashMap<ParameterKey, VariableValueInfo> classConstructors = new HashMap<>();
 
             List<TypeElement> roots = dag.getRoots();
             for(TypeElement root : roots){
@@ -113,7 +112,7 @@ public class TPFValueProcessor extends AbstractProcessor {
             HashSet<String> globalValueLocations = new HashSet<>();
             HashMap<String,HashSet<String>> configValueLocations = new HashMap<>();
 
-            HashMap<String, ClassValueMetadataV2> classData = new HashMap<>();
+            HashMap<String, ClassValueMetadata> classData = new HashMap<>();
 
             System.out.println("Keys: " + classFields.keySet().toString());
             for(FieldKey key : classFields.keySet())
@@ -122,10 +121,10 @@ public class TPFValueProcessor extends AbstractProcessor {
                 String originClass = key.originClass;
                 String fieldName = key.fieldName;
 
-                ClassValueMetadataV2 data = classData.computeIfAbsent(className,k->new ClassValueMetadataV2());
-                HashMap<String,VariableValueInfoV2> fields = data.fields.computeIfAbsent(originClass, k-> new HashMap<>());
+                ClassValueMetadata data = classData.computeIfAbsent(className, k->new ClassValueMetadata());
+                HashMap<String, VariableValueInfo> fields = data.fields.computeIfAbsent(originClass, k-> new HashMap<>());
 
-                VariableValueInfoV2 info = classFields.get(key);
+                VariableValueInfo info = classFields.get(key);
                 if(info.fileName.isBlank()){
                     globalValueLocations.add(info.location);
                 }
@@ -143,10 +142,10 @@ public class TPFValueProcessor extends AbstractProcessor {
                 String signature = key.constructorSignature;
                 int positionInConstructor = key.positionInConstructor;
 
-                ClassValueMetadataV2 data = classData.computeIfAbsent(className,k->new ClassValueMetadataV2());
-                HashMap<Integer, VariableValueInfoV2> constructor = data.constructors.computeIfAbsent(signature, k -> new HashMap<>());
+                ClassValueMetadata data = classData.computeIfAbsent(className, k->new ClassValueMetadata());
+                HashMap<Integer, VariableValueInfo> constructor = data.constructors.computeIfAbsent(signature, k -> new HashMap<>());
 
-                VariableValueInfoV2 info = classConstructors.get(key);
+                VariableValueInfo info = classConstructors.get(key);
                 if(info.fileName.isBlank()){
                     globalValueLocations.add(info.location);
                 }
@@ -165,7 +164,7 @@ public class TPFValueProcessor extends AbstractProcessor {
         return false;
     }
 
-    private void calc(TypeElement type, DAG<TypeElement> dag,HashMap<FieldKey, VariableValueInfoV2> classFields, HashMap<ParameterKey, VariableValueInfoV2> classConstructors , HashSet<VariableValueInfoV2> inheritedClassFields){
+    private void calc(TypeElement type, DAG<TypeElement> dag, HashMap<FieldKey, VariableValueInfo> classFields, HashMap<ParameterKey, VariableValueInfo> classConstructors , HashSet<VariableValueInfo> inheritedClassFields){
 
         String className = Utilities.toRuntimeClassName(type, processingEnv.getElementUtils());
 
@@ -195,7 +194,7 @@ public class TPFValueProcessor extends AbstractProcessor {
                     String parameterType = Utilities.getQualifiedTypeName(paramType, processingEnv.getTypeUtils());
 
                     ParameterKey key = new ParameterKey(className, constructorSignature,i);
-                    classConstructors.put(key,new VariableValueInfoV2(className,"N/A",parameterType, valueAnnotation.fileName(), valueAnnotation.location(),valueAnnotation.defaultValue(),false));
+                    classConstructors.put(key,new VariableValueInfo(className,"N/A",parameterType, valueAnnotation.fileName(), valueAnnotation.location(),valueAnnotation.defaultValue(),false));
                 }
 
                 continue;
@@ -226,14 +225,14 @@ public class TPFValueProcessor extends AbstractProcessor {
 
             String variableType = Utilities.getQualifiedTypeName(varType, processingEnv.getTypeUtils());
 
-            VariableValueInfoV2 newInfo = new VariableValueInfoV2(className, variable.getSimpleName().toString(), variableType,valueAnnotation.fileName(),valueAnnotation.location(),valueAnnotation.defaultValue(),variable.getModifiers().contains(Modifier.PRIVATE));
+            VariableValueInfo newInfo = new VariableValueInfo(className, variable.getSimpleName().toString(), variableType,valueAnnotation.fileName(),valueAnnotation.location(),valueAnnotation.defaultValue(),variable.getModifiers().contains(Modifier.PRIVATE));
             inheritedClassFields.remove(newInfo);
             inheritedClassFields.add(newInfo);
         }
 
         if(!inheritedClassFields.isEmpty()){
             System.out.println("Current Class: " + className);
-            for(VariableValueInfoV2 v : inheritedClassFields){
+            for(VariableValueInfo v : inheritedClassFields){
                 FieldKey key = new FieldKey(className,v.originClass,v.fieldName);
                 System.out.println("\tKey: " + key);
                 classFields.put(key,v);

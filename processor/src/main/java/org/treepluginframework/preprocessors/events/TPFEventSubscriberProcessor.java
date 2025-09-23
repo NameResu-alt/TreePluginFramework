@@ -50,7 +50,7 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
 
         if(roundEnv.processingOver()){
             System.out.println("Did you get here?:" + allTypes.size());
-            DAG<TypeElement> dg = new DAG<TypeElement>();
+            DAG<TypeElement> dg = DAG.regular();//new DAG<TypeElement>();
             Types typeUtils = processingEnv.getTypeUtils();
 
             for(TypeElement type : allTypes){
@@ -155,7 +155,6 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
                 collectedMethods.add(validSignature);
             }
         }
-
 
         HashSet<MethodSignature> methodsOfClass = classMethods.computeIfAbsent(root, k->new HashSet<>());
         methodsOfClass.addAll(collectedMethods);

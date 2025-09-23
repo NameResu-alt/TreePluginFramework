@@ -56,7 +56,7 @@ public class TPFNodeRepository {
         metadataFile.printMetadataFile();
         for(String qualifiedClassName : createOrder.keySet()){
             ConstructorInformation constructorInfo = metadataFile.constructorInformation.get(qualifiedClassName);
-            ClassValueMetadataV2 classData2 = valueFile.classData.getOrDefault(qualifiedClassName, null);
+            ClassValueMetadata classData2 = (valueFile != null) ? valueFile.classData.getOrDefault(qualifiedClassName, null) : null;
 
 
             Class<?> wantedClass = null;
@@ -82,7 +82,7 @@ public class TPFNodeRepository {
                             .collect(Collectors.joining(",","[","]"));
 
 
-            HashMap<Integer,VariableValueInfoV2> parameterValueInfo = (classData2 != null) ? classData2.constructors.getOrDefault(constructorSig,new HashMap<>()) : new HashMap<>();
+            HashMap<Integer, VariableValueInfo> parameterValueInfo = (classData2 != null) ? classData2.constructors.getOrDefault(constructorSig,new HashMap<>()) : new HashMap<>();
 
             System.out.println("Info from class Data: " + parameterValueInfo);
             //classData2.constructors.getOrDefault(construtor)
@@ -100,7 +100,7 @@ public class TPFNodeRepository {
                 }
 
                 if(parameterValueInfo.containsKey(i)){
-                    VariableValueInfoV2 inf = parameterValueInfo.get(i);
+                    VariableValueInfo inf = parameterValueInfo.get(i);
                     if(inf.fileName.isBlank()){
                         //Global one, simple enough.
                         params[i] = valueRepository.getGlobalValue(inf.location, classOfCurrentParameter);

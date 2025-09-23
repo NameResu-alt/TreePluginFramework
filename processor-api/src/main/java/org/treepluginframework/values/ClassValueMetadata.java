@@ -1,30 +1,29 @@
 package org.treepluginframework.values;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.util.HashMap;
+import java.util.Map;
 
-import java.util.*;
-
-//Parameters and fields is from whatever configuration file there is.
-//However, parameters is assumed to be part of a constructor, so I think
-//whatever constructor I choose, should be here as well.
-//I should record what type the parameters have first,
-//Then I should record what types I shoudl actually be providing to those parameters.
-
-//This will make it easier to find the constructor, and then simple to just plug stuff in.
-@Deprecated
 public class ClassValueMetadata {
-    //Parameters and fields holds the TPFValues.
-    //For fields, its simple since there can ever only be 1 field of that name in a class.
-    //For parameters, it becomes trickier, since multiple constructors can have TPFValue.
-    //Anything other than the main constructor is ignored, but I can end up with a situation where I overwrite the true constructor.
-    //So to fix this, I need to make a signature based on what the Constructor's parameters.
-    public Map<String,List<ParameterValueInfo>> parameters = new HashMap<>();
-    public Map<String, FieldValueInfo> fields = new HashMap<>();
+    //I need to keep information of all constructors of a class.
+    //I need to keep information of all fields of a class.
+    //Origin Class, field name, fieldValueInfo
+    //A single class can't have the same variable name more than once, so this is fine.
+    /***
+     * Origin class, Field name, VariableValueInfo
+     */
+    public HashMap<String,HashMap<String, VariableValueInfo>> fields = new HashMap<>();
+    //Constructor signature, position in constructor, FieldValueInfo
+    /***
+     * Constructor signature, Position in constructor, VariableValueInfo
+     */
+    public Map<String, HashMap<Integer, VariableValueInfo>> constructors = new HashMap<>();
 
+    public ClassValueMetadata(){
 
+    }
 
-    @JsonIgnore
-    public boolean isEmpty(){
-        return parameters.isEmpty() && fields.isEmpty();
+    public void merge(ClassValueMetadata otherMetadata){
+        fields.putAll(otherMetadata.fields);
+        constructors.putAll(otherMetadata.constructors);
     }
 }

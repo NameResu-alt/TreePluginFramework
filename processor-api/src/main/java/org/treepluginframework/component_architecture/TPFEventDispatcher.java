@@ -1,5 +1,9 @@
 package org.treepluginframework.component_architecture;
 
+import io.github.classgraph.ClassGraph;
+import io.github.classgraph.ClassInfo;
+import io.github.classgraph.ClassInfoList;
+import io.github.classgraph.ScanResult;
 import org.treepluginframework.annotations.EventSubscription;
 import org.treepluginframework.events.EventAdapter;
 import org.treepluginframework.events.IEvent;
@@ -9,19 +13,20 @@ import org.treepluginframework.values.MethodSignature;
 import org.treepluginframework.values.TPFEventFile;
 import org.treepluginframework.values.TPFStructureFile;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.lang.reflect.*;
 import java.util.*;
+import java.util.stream.Stream;
 
 public class TPFEventDispatcher {
-    private DAG<Object> graph = new DAG<Object>();
+    private DAG<Object> graph = DAG.identity();//new DAG<Object>();
 
     //Class type, event type, HandlerHolder.
     //One event type can have multiple HandlerHolders, if whatever the eventtype was an interface.
+    //Class, EventType, HandlerHolders of Event type.
     private HashMap<Class<?>, HashMap<Class<?>, ArrayList<HandlerHolder>>> cachedMethods = new HashMap<>();
     //The class of the object that has the methods.
     //The list of classes that have already been resolved.
-    private HashMap<Class<?>,Set<Class<?>>> firstTimeClassUsedEventType = new HashMap<>();
+    private IdentityHashMap<Object, HashMap<Class<?>, ArrayList<HandlerHolder>>> mergedHandlerCache = new IdentityHashMap<>();
 
     private List<Object[]> queuedObjects = new ArrayList<>();
 
@@ -39,65 +44,189 @@ public class TPFEventDispatcher {
         calculateCachedMethods();
     }
 
-    public void register(Object parent, Object component, boolean afterCurrentEvent){
+    public enum RegisterResult{
+        ADDED, ALREADY_EXISTS, QUEUED
+    }
+
+    public RegisterResult register(Object parent, Object component, boolean afterCurrentEvent){
         //if the graph doesn't contain the parent, nor the component.
         //I need to see if parent or component is an anonymous inner class.
         //If that's the case, I need to do a runtime cache of its HandlerHolders.
+        RegisterResult result = RegisterResult.ADDED;
         if(!afterCurrentEvent)
         {
-            graph.addEdge(parent, component);
+            boolean ableToAddEdge = graph.addEdge(parent, component);
+            if(!ableToAddEdge){
+                result = RegisterResult.ALREADY_EXISTS;
+            }
         }
         else
         {
             queuedObjects.add(new Object[]{parent,component});
         }
 
-        //If parent, or component is an anonymous inner class...
-        //I need to do a runtime register.
-        //Go through all its methods, and check to see what is good.
-        parent.getClass().isAnonymousClass();
+        if(component != null){
+            if(component.getClass().isAnonymousClass()){
+                runtimeRegister(component);
+            }
+        }
+
+        return result;
     }
 
-    //It'd mainly be for anonymous inner classes. Wondering if its worth the headache
-    //I need to make sure that whatever methods I'm registering here are from the anonymous inner class itself, and not the base class.
-    //Actually, getDeclaredMethods covers this, so nevermind.
-    //Which now makes me wonder, what does EventSubscription do if I extend the class?
-    private void runtimeRegister(Object obj, EventAdapter<?> adapter){
-        Method[] methods = obj.getClass().getDeclaredMethods();
-        for(Method m : methods){
-            if(!m.isAnnotationPresent(EventSubscription.class)) continue;
+    private void runtimeRegister(Object obj){
+        if(obj == null) return;
 
-            Class<?>[] variables = m.getParameterTypes();
-            if(variables.length == 0){
-                continue;
-            }
 
-            if(variables.length > 2){
-                continue;
-            }
+        HashMap<String, Class<?>> foundClasses = new HashMap<>();
 
-            if(variables[0].isPrimitive()){
-                //Don't allow for primitives.
-                continue;
-            }
 
-            if(variables[0].isAssignableFrom(List.class) || variables[0].isAssignableFrom(Map.class) || variables[0].isArray())
-            {
-                //Don't allow for lists, maps, or arrays, again.
-                continue;
-            }
+        Class<?> anonClass = obj.getClass();
 
-            if(variables.length == 2){
-                Class<?> adapterType = variables[1];
-                if(!adapterType.isAssignableFrom(EventAdapter.class)) continue;
-                //Type erasure, oh no.
-                //At this point, I'm forced to assume that the user knows what they are doing.
-                //The pro is that the dispatch system prevents incompatible events and adapters from being called.
-                //So, that's fine.
+        HashMap<Class<?>,ArrayList<HandlerHolder>> anonymousCache =  new HashMap<>();
+
+        try (ScanResult scanResult = new ClassGraph().enableAllInfo().scan()) {
+            ClassInfo classInfo = scanResult.getClassInfo(anonClass.getName());
+
+            // Collect method signatures from superclasses and interfaces
+            Set<String> parentMethods = new HashSet<>();
+            classInfo.getSuperclasses().forEach(s -> {
+                try {
+                    for (Method m : Class.forName(s.getName()).getDeclaredMethods()) {
+                        parentMethods.add(signature(m));
+                    }
+                } catch (ClassNotFoundException ignored) {}
+            });
+            classInfo.getInterfaces().forEach(i -> {
+                try {
+                    for (Method m : Class.forName(i.getName()).getDeclaredMethods()) {
+                        parentMethods.add(signature(m));
+                    }
+                } catch (ClassNotFoundException ignored) {}
+            });
+
+            // Now check declared methods in the anonymous class
+            for (Method m : anonClass.getDeclaredMethods()) {
+                EventSubscription eventSubscription = m.getAnnotation(EventSubscription.class);
+                if(eventSubscription == null) continue;
+
+                if(!validateEventMethodSignature(m)){
+                    continue;
+                }
+
+                boolean expectsAdapter = m.getParameters().length == 2;
+                Class<?> eventType = m.getParameters()[0].getType();
+                Class<?> adapterType = (expectsAdapter) ? m.getParameters()[1].getType() : null;
+
+                m.setAccessible(true);
+                HandlerHolder h = new HandlerHolder(m, eventSubscription.priority(),expectsAdapter, adapterType, eventSubscription.useSubClasses());
+
+                if (eventSubscription.useSubClasses()) {
+                    addSubClasses(eventType,h,anonymousCache,foundClasses,scanResult);
+                }
+
+                anonymousCache.computeIfAbsent(eventType, k->new ArrayList<>()).add(h);
+
             }
-            //Then I'll need a map to store the handler holders and stuff.
-            //It'll be in addition to whatever handlers the anonymous inner class has.
         }
+
+        HashMap<Class<?>,ArrayList<HandlerHolder>> combined = mergedHandlerCache.compute(obj, (k,v)-> new HashMap<>());
+
+        Class<?> baseSuperClass = anonClass.getSuperclass();
+        if(cachedMethods.containsKey(baseSuperClass)){
+            System.out.println("Cached method already has this class: " + baseSuperClass);
+            HashMap<Class<?>, ArrayList<HandlerHolder>> handlersOfBaseClass = cachedMethods.get(baseSuperClass);
+            for(Class<?> eventType : handlersOfBaseClass.keySet()){
+
+                ArrayList<HandlerHolder> combine = new ArrayList<>(handlersOfBaseClass.get(eventType));
+                if(anonymousCache.containsKey(eventType)){
+                    ArrayList<HandlerHolder> anonymousHandlersOfEvent = anonymousCache.get(eventType);
+                    System.out.println("Cobined size before: " + combine.size());
+                    combine.removeAll(anonymousHandlersOfEvent);
+                    System.out.println("Cobined size after remove: " + combine.size());
+                    combine.addAll(anonymousHandlersOfEvent);
+                    System.out.println("Conbined final size: " + combine.size());
+                }
+                combined.put(eventType,combine);
+            }
+        }
+        else
+        {
+            System.out.println("Cache doesn't hold the base class " + baseSuperClass);
+        }
+
+        for(Class<?> eventType : anonymousCache.keySet()){
+            if(combined.containsKey(eventType)) continue;
+            combined.put(eventType, anonymousCache.get(eventType));
+        }
+
+        System.out.println("Combined Size: " + combined.size());
+        System.out.println("KeySet: " + combined.keySet());
+        for(Class<?> keyClass : combined.keySet()){
+            ArrayList<HandlerHolder> list = combined.get(keyClass);
+            list.sort((o1, o2) -> o2.priority - o1.priority);
+            System.out.println("Anonymous event class: " + keyClass);
+            list.forEach(e->System.out.println("\tMethod: " + e));
+        }
+    }
+
+    private boolean validateEventMethodSignature(Method m){
+        if(m.getParameters().length > 3){
+            throw new IllegalArgumentException("An EventSubscription method can only have an event, and its adapter as parameters");
+        }
+
+        Parameter[] parameters = m.getParameters();
+        Class<?> eventType = parameters[0].getType();
+        Class<?> adapterType = (parameters.length > 1) ? parameters[1].getType() : Void.class;
+
+        if(eventType.isPrimitive()){
+            //Problem.
+
+            throw new IllegalArgumentException("An EventSubscription method cannot have a primitive as an event.");
+        }
+
+        if(isIterableLike(eventType))
+        {
+            throw new IllegalArgumentException("An EventSubscription method must have an event that's not a Map, Array, or Iterable in any way.");
+        }
+
+        if(adapterType != Void.class){
+            if(!EventAdapter.class.isAssignableFrom(adapterType)){
+                throw new IllegalArgumentException("Second argument must be an EventAdapter");
+            }
+
+            Type superType = adapterType.getGenericSuperclass();
+
+            if(superType instanceof ParameterizedType pt){
+                Type actual = pt.getActualTypeArguments()[0];
+                if(actual instanceof Class<?> adapterEventType){
+                    if(!adapterEventType.isAssignableFrom(eventType)){
+                        throw new IllegalArgumentException(
+                                "The EventAdapter's generic type must be compatible with the Event type"
+                        );
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private boolean isIterableLike(Class<?> clazz) {
+        if (clazz == null) return false;
+
+        return Iterable.class.isAssignableFrom(clazz) ||
+                Map.class.isAssignableFrom(clazz) ||
+                clazz.isArray() ||
+                CharSequence.class.isAssignableFrom(clazz) ||
+                Iterator.class.isAssignableFrom(clazz) ||
+                Enumeration.class.isAssignableFrom(clazz) ||
+                Stream.class.isAssignableFrom(clazz) ||
+                Spliterator.class.isAssignableFrom(clazz);
+    }
+
+    private  String signature(Method m) {
+        return m.getName() + Arrays.toString(m.getParameterTypes());
     }
 
     public void registerLogger(Object logger){
@@ -106,22 +235,101 @@ public class TPFEventDispatcher {
 
     public void unregister(Object obj){
         graph.removeNode(obj);
+        mergedHandlerCache.remove(obj);
     }
 
     // For events that implement IEvent — wraps them in a NativeEventAdapter
     public void emit(Object fromComponent, IEvent event){
         if (event == null) throw new IllegalArgumentException("Event cannot be null");
-        dispatchOnGoing = true;
-        dispatch(fromComponent, new NativeEventAdapter(event));
-        finishedDispatch();
+        emit(fromComponent,new NativeEventAdapter(event));
+        //dispatchOnGoing = true;
+        //dispatch(fromComponent, new NativeEventAdapter(event));
+        //finishesdDispatch();
     }
 
     // For external or generic events — assumes a custom adapter is already provided
     public void emit(Object fromComponent, EventAdapter<?> adapter){
         if (adapter == null) throw new IllegalArgumentException("Adapter cannot be null");
         dispatchOnGoing = true;
-        dispatch(fromComponent, adapter);
+        //dispatch(fromComponent, adapter);
+
+        Deque<Object> stack = new ArrayDeque<>();
+        stack.push(fromComponent);
+
+        while(!stack.isEmpty() && !adapter.isPropagationStopped()){
+            Object current = stack.pop();
+
+            invokeHandlers(current,adapter);
+
+            if(adapter.isPropagationStopped()){
+                break;
+            }
+
+            for(Object child : graph.getChildren(current)){
+                stack.push(child);
+            }
+        }
+
         finishedDispatch();
+    }
+
+    private void invokeHandlers(Object component, EventAdapter<?> adapter){
+        Class<?> componentClass = component.getClass();
+        Class<?> eventType = adapter.getEffectiveEventType();
+
+        // Handle the component itself if it has a handler
+        //Map<Class<?>, HandlerHolder> componentHandlers = cachedMethods.get(componentClass);
+        Map<Class<?>, ArrayList<HandlerHolder>> componentHandlers = cachedMethods.get(componentClass);
+
+        ArrayList<HandlerHolder> handlers;
+
+        if(mergedHandlerCache.containsKey(component)){
+
+            if(mergedHandlerCache.get(component).containsKey(eventType)){
+                handlers = mergedHandlerCache.get(component).get(eventType);
+            }
+            else
+            {
+                return;
+            }
+        }
+        else if(cachedMethods.containsKey(componentClass)){
+            if(cachedMethods.get(componentClass).containsKey(eventType)){
+                handlers = cachedMethods.get(componentClass).get(eventType);
+            }
+            else
+            {
+                return;
+            }
+        }
+        else
+        {
+            return;
+        }
+
+        if(handlers == null || handlers.isEmpty()) return;
+
+        for(HandlerHolder handler : handlers){
+            try {
+                if (handler.expectsAdapter) {
+                    /// TODO: Log that the event was skipped due to adapter mismatch
+
+                    Class<?> adapterType = (adapter.getClass().isAnonymousClass()) ? adapter.getClass().getSuperclass() : adapter.getClass();
+
+                    if(adapterType.isAssignableFrom(handler.adapterType)) {
+                        handler.method.invoke(component, adapter.getEvent(), adapter);
+                    }
+                    else
+                    {
+                        System.out.println("Adapter not compatible, Adapter is " + adapter.getClass() + " And Handler wants: " + handler.adapterType);
+                    }
+                } else {
+                    handler.method.invoke(component, adapter.getEvent());
+                }
+            } catch (IllegalAccessException | InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
+        }
     }
 
     private void finishedDispatch(){
@@ -135,122 +343,6 @@ public class TPFEventDispatcher {
         this.queuedObjects.clear();
     }
 
-
-    //Only going to deal with downstream events right now.
-    private void dispatch(Object component, EventAdapter<?> adapter) {
-        if (component == null) {
-            System.out.println("Attempted to dispatch an event with a null component: " + adapter.getEvent().getClass());
-            return;
-        }
-
-        if(adapter.isPropagationStopped()) return;
-
-        Class<?> componentClass = component.getClass();
-        Class<?> eventType = adapter.getEffectiveEventType();
-
-        // Handle the component itself if it has a handler
-        //Map<Class<?>, HandlerHolder> componentHandlers = cachedMethods.get(componentClass);
-        Map<Class<?>, ArrayList<HandlerHolder>> componentHandlers = cachedMethods.get(componentClass);
-
-        /// TODO: If the current class doesn't have a handler for it, I need to search its superclasses to see if they do.
-        /// If that's the case, just take that method and put it in the component handlers.
-        /// I'll also need to have something to make sure that I don't repeat this search with class type and event type.
-        if(componentHandlers != null){
-            ArrayList<HandlerHolder> handlers = componentHandlers.getOrDefault(eventType,null);
-            boolean runtimeCheck = handlers == null || !firstTimeClassUsedEventType.containsKey(componentClass) || !firstTimeClassUsedEventType.get(componentClass).contains(eventType);
-
-            if(runtimeCheck){
-                System.out.println("Runtime Check occurred for: " + componentClass.getName());
-                if(handlers == null){
-                    //I didn't find an event specifically for this class type. I need to look at superclasses.
-                    //Walk up the type hierarchy and see if I have a holder that does allow for this.
-                    //Then, I need to see if that handler allows the use of subClasses.
-                    //If it doesn't, skip it. If it does, stop.
-                    Class<?> current = eventType.getSuperclass();
-                    while(current != null){
-                        if(componentHandlers.containsKey(current)){
-                            ArrayList<HandlerHolder> potentialCandidates = componentHandlers.get(current);
-                            ArrayList<HandlerHolder> viableCandidates = new ArrayList<>();
-
-                            for(HandlerHolder holder : potentialCandidates){
-                                if(holder.useSubClasses){
-                                    viableCandidates.add(holder);
-                                }
-                            }
-
-                            if(!viableCandidates.isEmpty()){
-                                handlers = viableCandidates;
-                                componentHandlers.put(eventType,viableCandidates);
-                                break;
-                            }
-                        }
-                        current = current.getSuperclass();
-                    }
-                    //Sort based on priority.
-                    if(handlers != null){
-                        Collections.sort(handlers, new Comparator<HandlerHolder>() {
-                            @Override
-                            public int compare(HandlerHolder o1, HandlerHolder o2) {
-                                return o2.priority - o1.priority;
-                            }
-                        });
-                    }
-                }
-
-                //Now I need to walk up the superclass again, but this time, I need to do it with interface checks.
-
-                ArrayList<HandlerHolder> interfaceHandlers = new ArrayList<>();
-                HashSet<Class<?>> foundInterfaces = new HashSet<>();
-
-                Class<?> current = eventType;
-                while(current != null){
-                    checkInterfaces(current,componentHandlers,interfaceHandlers, foundInterfaces);
-                    current = current.getSuperclass();
-                }
-
-                Collections.sort(interfaceHandlers, new Comparator<HandlerHolder>() {
-                    @Override
-                    public int compare(HandlerHolder o1, HandlerHolder o2) {
-                        return o2.priority - o1.priority;
-                    }
-                });
-
-                if(handlers == null){
-                    handlers = interfaceHandlers;
-                    componentHandlers.put(eventType,interfaceHandlers);
-                }
-                else
-                {
-                    handlers.addAll(interfaceHandlers);
-                }
-
-                firstTimeClassUsedEventType.computeIfAbsent(componentClass, k->new HashSet<>()).add(eventType);
-            }
-
-
-            if(handlers != null){
-                for(HandlerHolder handler : handlers){
-                    try {
-                        if (handler.expectsAdapter) {
-                            /// TODO: Log that the event was skipped due to adapter mismatch
-                            if(adapter.getClass().isAssignableFrom(handler.adapterType))
-                                handler.method.invoke(component, adapter.getEvent(), adapter);
-                        } else {
-                            handler.method.invoke(component, adapter.getEvent());
-                        }
-                    } catch (IllegalAccessException | InvocationTargetException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            }
-        }
-
-        Set<Object> children = graph.getChildren(component);
-        for(Object child : children){
-            dispatch(child,adapter);
-            if(adapter.isPropagationStopped()) return;
-        }
-    }
 
 
     private void  checkInterfaces(Class<?> eventType, Map<Class<?>, ArrayList<HandlerHolder>> componentHandlers, ArrayList<HandlerHolder> interfaceHolderList, HashSet<Class<?>> visitedInterfaces)
@@ -309,92 +401,106 @@ public class TPFEventDispatcher {
         graph.printGraph();
     }
 
-    private void calculateCachedMethods(){
-        if(eventFile == null) return;
+    private void calculateCachedMethods() {
+        if (eventFile == null) return;
 
-        //ClassName, EventType, MethodSignature
+        // ClassName, EventType, MethodSignature
         Map<String, HashMap<String, HashSet<MethodSignature>>> preCache = eventFile.methodCache;
 
-        HashMap<String,Class<?>> foundClasses = new HashMap<>();
+        HashMap<String, Class<?>> foundClasses = new HashMap<>();
 
-        //qualified class name is the class that contains the method
-        for(String qualifiedClassName : preCache.keySet()){
-            Class<?> currentClass = foundClasses.getOrDefault(qualifiedClassName,null);
-            if(currentClass == null) {
-                try {
-                    currentClass = Class.forName(qualifiedClassName);
-                } catch (ClassNotFoundException e) {
-                    throw new RuntimeException(e);
-                }
-            }
+        // Scan once up front
+        try (ScanResult scanResult = new ClassGraph().enableClassInfo().scan()) {
 
-            HashMap<Class<?>, ArrayList<HandlerHolder>> cache = cachedMethods.computeIfAbsent(currentClass, k -> new HashMap<>());
-            HashMap<String,HashSet<MethodSignature>> methodsToCache = preCache.get(qualifiedClassName);
+            // qualified class name is the class that contains the method
+            for (String qualifiedClassName : preCache.keySet()) {
+                Class<?> currentClass = resolveClass(qualifiedClassName,foundClasses);//foundClasses.get(qualifiedClassName);
 
-            for(String qualifiedEventClassName : methodsToCache.keySet()){
-                Class<?> eventType = foundClasses.getOrDefault(qualifiedClassName,null);
-                if(eventType == null) {
-                    try {
-                        eventType = Class.forName(qualifiedEventClassName);
-                    } catch (ClassNotFoundException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
+                HashMap<Class<?>, ArrayList<HandlerHolder>> cache =
+                        cachedMethods.computeIfAbsent(currentClass, k -> new HashMap<>());
+                HashMap<String, HashSet<MethodSignature>> methodsToCache = preCache.get(qualifiedClassName);
 
-                ArrayList<HandlerHolder> methodsWithEvent = cache.computeIfAbsent(eventType, k->new ArrayList<>());
+                for (String qualifiedEventClassName : methodsToCache.keySet()) {
+                    Class<?> eventType = resolveClass(qualifiedEventClassName,foundClasses);//foundClasses.get(qualifiedEventClassName);
 
-                //System.out.println("Main Class: " + qualifiedClassName + " Event Type: " + qualifiedEventClassName);
-                //System.out.println(methodsToCache.keySet());
-                for(MethodSignature sig : methodsToCache.get(qualifiedEventClassName)){
+                    ArrayList<HandlerHolder> methodsWithEvent =
+                            cache.computeIfAbsent(eventType, k -> new ArrayList<>());
 
-                    Class<?> originClass = foundClasses.getOrDefault(sig.originClass, null);
-                    if(originClass == null){
-                        try {
-                            originClass = Class.forName(sig.originClass);
-                        } catch (ClassNotFoundException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
+                    for (MethodSignature sig : methodsToCache.get(qualifiedEventClassName)) {
 
-                    Class<?>[] parameterTypes = new Class[sig.parameterTypes.size()];
-                    for(int i = 0; i<sig.parameterTypes.size();i++){
-                        String parameterType = sig.parameterTypes.get(i);
-                        Class<?> paramClass = null;
-                        try {
-                            paramClass = Class.forName(parameterType);
-                        } catch (ClassNotFoundException e) {
-                            throw new RuntimeException(e);
+                        Class<?> originClass = resolveClass(sig.originClass,foundClasses);//foundClasses.get(sig.originClass);
+
+                        Class<?>[] parameterTypes = new Class[sig.parameterTypes.size()];
+                        for (int i = 0; i < sig.parameterTypes.size(); i++) {
+                            String parameterType = sig.parameterTypes.get(i);
+                            Class<?> paramClass = resolveClass(parameterType,foundClasses);//foundClasses.get(parameterType);
+
+                            parameterTypes[i] = paramClass;
                         }
 
-                        parameterTypes[i] = paramClass;
-                    }
+                        Method method;
+                        try {
+                            method = originClass.getDeclaredMethod(sig.methodName, parameterTypes);
+                        } catch (NoSuchMethodException e) {
+                            throw new RuntimeException(e);
+                        }
+                        method.setAccessible(true);
 
-                    String methodName = sig.methodName;
+                        Class<?> adapterType = null;
+                        if (sig.expectsAdapter) {
+                            adapterType = method.getParameters()[1].getType();
+                        }
 
-                    Method method = null;
-                    try {
-                        method = originClass.getDeclaredMethod(methodName, parameterTypes);
-                    } catch (NoSuchMethodException e) {
-                        throw new RuntimeException(e);
+                        HandlerHolder hold = new HandlerHolder(
+                                method,
+                                sig.priority,
+                                sig.expectsAdapter,
+                                adapterType,
+                                sig.useSubClasses
+                        );
+
+                        if (sig.useSubClasses) {
+                            addSubClasses(eventType,hold,cache,foundClasses,scanResult);
+                        }
+
+                        methodsWithEvent.add(hold);
                     }
-                    method.setAccessible(true);
-                    Class<?> adapterType = null;
-                    if(sig.expectsAdapter){
-                        adapterType = method.getParameters()[1].getType();
-                    }
-                    HandlerHolder hold = new HandlerHolder(method, sig.priority, sig.expectsAdapter,adapterType, sig.useSubClasses);
-                    methodsWithEvent.add(hold);
                 }
 
-                Collections.sort(methodsWithEvent, new Comparator<HandlerHolder>() {
-                    @Override
-                    public int compare(HandlerHolder o1, HandlerHolder o2) {
-                        return o2.priority-o1.priority;
-                    }
-                });
+                // sort each handler list by priority once per event type
+                for (ArrayList<HandlerHolder> list : cache.values()) {
+                    list.sort((o1, o2) -> o2.priority - o1.priority);
+                }
             }
         }
     }
+
+    private Class<?> resolveClass(String className, Map<String, Class<?>> cache) {
+        return cache.computeIfAbsent(className, name -> {
+            try {
+                return Class.forName(name);
+            } catch (ClassNotFoundException e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private void addSubClasses(Class<?> eventType, HandlerHolder handler,
+                               HashMap<Class<?>, ArrayList<HandlerHolder>> cache,
+                               Map<String, Class<?>> classCache,
+                               ScanResult scanResult) {
+        ClassInfoList associated = eventType.isInterface()
+                ? scanResult.getClassesImplementing(eventType)
+                : scanResult.getSubclasses(eventType);
+
+        for (ClassInfo ci : associated) {
+            Class<?> descendant = resolveClass(ci.getName(), classCache);
+            if (descendant != eventType) {
+                cache.computeIfAbsent(descendant, k -> new ArrayList<>()).add(handler);
+            }
+        }
+    }
+
 
 
     // Internal holder for a handler method and its priority
@@ -411,6 +517,62 @@ public class TPFEventDispatcher {
             this.adapterType = adapterType;
             this.expectsAdapter = expectsAdapter;
             this.useSubClasses = useSubClasses;
+        }
+
+        @Override
+        public boolean equals(Object other){
+            if(!(other instanceof HandlerHolder oHandler)){
+                return false;
+            }
+
+            if(oHandler.method == this.method) return true;
+
+            if(!oHandler.method.getName().equals(method.getName())){
+                return false;
+            }
+
+            if (!Arrays.equals(oHandler.method.getParameterTypes(), method.getParameterTypes())) {
+                return false;
+            }
+
+            int m1 = method.getModifiers();
+            int m2 = oHandler.method.getModifiers();
+
+            if (Modifier.isPublic(m1) || Modifier.isPublic(m2)) {
+                // both must be public
+                return Modifier.isPublic(m1) && Modifier.isPublic(m2);
+            }
+            if (Modifier.isProtected(m1) || Modifier.isProtected(m2)) {
+                // both must be protected or package-private (can't mix public and protected in a weird way)
+                return !Modifier.isPrivate(m1) && !Modifier.isPrivate(m2);
+            }
+// otherwise package-private (default)
+            return !Modifier.isPrivate(m1) && !Modifier.isPrivate(m2);
+        }
+
+        @Override
+        public int hashCode() {
+            int visibility;
+            if (Modifier.isPublic(method.getModifiers())) {
+                visibility = 3;
+            } else if (Modifier.isProtected(method.getModifiers())) {
+                visibility = 2;
+            } else if (Modifier.isPrivate(method.getModifiers())) {
+                visibility = 0;
+            } else {
+                visibility = 1; // package-private
+            }
+
+            return Objects.hash(
+                    method.getName(),
+                    Arrays.hashCode(method.getParameterTypes()),
+                    visibility
+            );
+        }
+
+        @Override
+        public String toString(){
+            return method.getName();
         }
     }
 }

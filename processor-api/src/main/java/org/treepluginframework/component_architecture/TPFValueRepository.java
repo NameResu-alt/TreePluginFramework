@@ -123,7 +123,7 @@ public class TPFValueRepository {
                 alreadyFoundClasses.put(className,wantedClass);
             }
 
-            ClassValueMetadataV2 data = valueFile.classData.get(className);
+            ClassValueMetadata data = valueFile.classData.get(className);
             DestinationClassFieldCache newCache = cachedFields.computeIfAbsent(wantedClass,k->new DestinationClassFieldCache());
 
             for(String destinationClassName : data.fields.keySet()){
@@ -138,7 +138,7 @@ public class TPFValueRepository {
                     alreadyFoundClasses.put(destinationClassName,destinationClass);
                 }
 
-                HashMap<String,VariableValueInfoV2> fields = data.fields.get(destinationClassName);
+                HashMap<String, VariableValueInfo> fields = data.fields.get(destinationClassName);
                 for(String fieldName : fields.keySet()){
                     Field neededField = null;
                     try {
@@ -494,7 +494,7 @@ public class TPFValueRepository {
 
             for(FieldAndLocation data : fields){
                 Field field = data.field;
-                VariableValueInfoV2 info = data.info;
+                VariableValueInfo info = data.info;
                 if(!data.info.fileName.isBlank()){
                     //This is a file request.
                     FileValueRequest request = fileRequests.computeIfAbsent(data.info.fileName, FileValueRequest::new);
@@ -633,7 +633,7 @@ public class TPFValueRepository {
     private static class DestinationClassFieldCache {
         private final Map<Class<?>, HashSet<FieldAndLocation>> fields = new HashMap<>();
 
-        void add(Class<?> origin, Field field, VariableValueInfoV2 info) {
+        void add(Class<?> origin, Field field, VariableValueInfo info) {
             fields
                     .computeIfAbsent(origin, k -> new HashSet<>()).add(new FieldAndLocation(field,info));
         }
@@ -649,9 +649,9 @@ public class TPFValueRepository {
 
     private static class FieldAndLocation{
         public Field field;
-        public VariableValueInfoV2 info;
+        public VariableValueInfo info;
 
-        public FieldAndLocation(Field field, VariableValueInfoV2 info){
+        public FieldAndLocation(Field field, VariableValueInfo info){
             this.field = field;
             this.info = info;
         }
