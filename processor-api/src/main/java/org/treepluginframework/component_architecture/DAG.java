@@ -11,6 +11,7 @@ public class DAG<T> {
     private final Map<T, LinkedHashSet<T>> adjList;
     private final Map<T, LinkedHashSet<T>> reverseAdjList;
     private final BiMap<UUID,T> dagUUIDs = HashBiMap.create();
+    private final UUID dagUUID = UUID.randomUUID();
 
     private DAG(Supplier<Map<T, LinkedHashSet<T>>> mapSupplier) {
         this.adjList = mapSupplier.get();
@@ -43,6 +44,10 @@ public class DAG<T> {
 
     public static <T> DAG<T> concurrent() {
         return new DAG<>(ConcurrentHashMap::new);
+    }
+
+    public UUID getDagUUID(){
+        return this.dagUUID;
     }
 
     public void addNode(T node) {
@@ -156,8 +161,14 @@ public class DAG<T> {
         return adjList.containsKey(node);
     }
 
-    public Set<T> getAllNodes() {
-        return Collections.unmodifiableSet(adjList.keySet());
+    public HashMap<UUID,T> getAllNodes() {
+        HashMap<UUID,T> all = new HashMap<>();
+
+        for(T key : adjList.keySet()){
+            all.put(getNodeUUID(key), key);
+        }
+
+        return all;
     }
 
     public void printGraph() {
@@ -201,5 +212,43 @@ public class DAG<T> {
             }
         }
         return roots;
+    }
+
+    public List<UUID> getRootUUIDs(){
+        List<T> roots = this.getRoots();
+        List<UUID> uuids = new ArrayList<>();
+
+        roots.forEach(k->uuids.add(getNodeUUID(k)));
+
+        return uuids;
+    }
+
+    public T getNode(UUID nodeUUID){
+        return dagUUIDs.getOrDefault(nodeUUID, null);
+    }
+
+    public UUID getNodeUUID(T node){
+        return dagUUIDs.inverse().getOrDefault(node,null);
+    }
+
+    public Map<UUID,LinkedHashSet<UUID>> getAllEdgesInUUID(){
+        Map<UUID,LinkedHashSet<UUID>> map = new HashMap<>();
+        for(T key : adjList.keySet()){
+            UUID nodeUUID = getNodeUUID(key);
+
+            LinkedHashSet<T> children = adjList.get(key);
+
+            LinkedHashSet<UUID> childrenUUID = new LinkedHashSet<>();
+
+            children.forEach(k->childrenUUID.add(getNodeUUID(k)));
+
+            map.put(nodeUUID, childrenUUID);
+        }
+        return map;
+    }
+
+    //If any one of those maps is empty, the dag is empty.
+    public boolean isEmpty(){
+        return dagUUIDs.isEmpty();
     }
 }

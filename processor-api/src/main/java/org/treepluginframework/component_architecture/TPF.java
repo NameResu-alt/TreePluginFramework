@@ -1,7 +1,7 @@
 package org.treepluginframework.component_architecture;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.treepluginframework.hooks.TPFEventLog;
+import org.treepluginframework.meta_events.TPFMetaEvent;
 import org.treepluginframework.values.TPFEventFile;
 import org.treepluginframework.values.TPFStructureFile;
 import org.treepluginframework.values.TPFValueFile;
@@ -159,7 +159,7 @@ public class TPF {
         this.valueRepository.injectFields(ob);
     }
 
-    private void tpfLogEvent(TPFEventLog log){
+    private void tpfLogEvent(TPFMetaEvent log){
 
     }
 

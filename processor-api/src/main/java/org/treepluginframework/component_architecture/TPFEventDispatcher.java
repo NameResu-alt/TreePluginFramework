@@ -8,6 +8,8 @@ import org.treepluginframework.annotations.EventSubscription;
 import org.treepluginframework.events.EventAdapter;
 import org.treepluginframework.events.IEvent;
 import org.treepluginframework.events.NativeEventAdapter;
+import org.treepluginframework.meta_events.dag.node_data.DAGNodeMetadata;
+import org.treepluginframework.meta_events.dag.node_data.DAGNodeMetadataCache;
 import org.treepluginframework.values.ConstructorInformation;
 import org.treepluginframework.values.MethodSignature;
 import org.treepluginframework.values.TPFEventFile;
@@ -573,6 +575,33 @@ public class TPFEventDispatcher {
         @Override
         public String toString(){
             return method.getName();
+        }
+    }
+
+    public DAGSnapshot getDAGSnapshot(){
+        return new DAGSnapshot(graph);
+    }
+
+    public static class DAGSnapshot{
+        private HashMap<UUID, DAGNodeMetadata> nodes = new HashMap<>();
+        private List<UUID> roots = new ArrayList<>();
+        private Map<UUID, LinkedHashSet<UUID>> edges = new HashMap<>();
+
+        public DAGSnapshot(DAG<?> dag){
+            this.grabDAGData(dag);
+        }
+
+        private void grabDAGData(DAG<?> dag){
+            if(dag.isEmpty()) return;
+            this.roots = dag.getRootUUIDs();
+            this.edges = dag.getAllEdgesInUUID();
+
+            HashMap<UUID, ?> allNodes = dag.getAllNodes();
+            for(UUID uuid : allNodes.keySet()){
+                Object node = allNodes.get(uuid);
+                DAGNodeMetadata meta = DAGNodeMetadataCache.getMetadata(uuid,node);
+                this.nodes.put(uuid, meta);
+            }
         }
     }
 }
