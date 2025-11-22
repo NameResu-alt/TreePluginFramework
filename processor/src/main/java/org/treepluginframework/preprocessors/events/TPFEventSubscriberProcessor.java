@@ -3,7 +3,11 @@ package org.treepluginframework.preprocessors.events;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.auto.service.AutoService;
 import org.treepluginframework.annotations.EventSubscription;
+import org.treepluginframework.annotations.MetaEventSubscription;
+import org.treepluginframework.annotations.TPFMetaEventListener;
+import org.treepluginframework.annotations.TPFNode;
 import org.treepluginframework.component_architecture.DAG;
+import org.treepluginframework.meta_events.TPFMetaEvent;
 import org.treepluginframework.values.MethodSignature;
 import org.treepluginframework.values.TPFEventFile;
 
@@ -36,12 +40,20 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
     //Make sure that a TPFNode can't also be marked as a resource.
     @Override
     public Set<String> getSupportedAnnotationTypes(){
-        return Set.of("org.treepluginframework.annotations.EventSubscription");
+        return Set.of("org.treepluginframework.annotations.EventSubscription","org.treepluginframework.annotations.MetaEventSubscription");
     }
 
     Set<TypeElement> allTypes = new HashSet<>();
 
-    public boolean processV2(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv){
+    //If a class have both EventSubscription, and MetaEventSubscription, I need to throw an error. You should only have one or the other.
+    //If a class is annotated with TPFNode, if any method is annotated with MetaEventSubscription, throw an error.
+    //If a class is annotated with TPFMetaEventListener, if any method is annotated with EventSubscription, throw an error.
+
+    //Since a class doesn't need to be annotated with TPFNode or TPFMetaEventListener to have subscriptions,
+    //I need to throw the errors here, in the EventSubscriberProcessor, can't do it the NodeProcessor.
+
+    @Override
+    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv){
         for(Element m : roundEnv.getRootElements()){
             if(m instanceof TypeElement type){
                 allTypes.add(type);
@@ -50,7 +62,7 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
 
         if(roundEnv.processingOver()){
             System.out.println("Did you get here?:" + allTypes.size());
-            DAG<TypeElement> dg = DAG.regular();//new DAG<TypeElement>();
+            DAG<TypeElement> dg = new DAG<>();//DAG.regular();//new DAG<TypeElement>();
             Types typeUtils = processingEnv.getTypeUtils();
 
             for(TypeElement type : allTypes){
@@ -59,6 +71,7 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
                 if(superMirror.getKind() != TypeKind.NONE){
                     superType = (TypeElement) typeUtils.asElement(superMirror);
                 }
+                System.out.println("Whats the super type of current: " + type +" , " + ((superType == null) ? "NULL" : superType.getQualifiedName()));
                 dg.addEdge(superType, type);
 
                 /// HOLD UP: With interfaces, the only thing I want is that if the interface method has @EventSubscription, if the child doesn't also have that annotation on their method, throw an error.
@@ -79,10 +92,14 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
             //for each class, see if they have methods annotated with EventSubscriber.
             //If they do, do your processing, and keep in mind what's going on.
             HashMap<TypeElement,HashSet<MethodSignature>> loggedErrors = new HashMap<>();
+            //This setup means that by default, when the runtime program gets the methods, it's already computed the overrides.
+            //This is now the place to be.
             for(TypeElement elem : rootElements){
-                calc(dg, elem, classMethods,new HashSet<MethodSignature>(), loggedErrors);
+                calc(dg, elem, classMethods,new HashSet<MethodSignature>(), loggedErrors,false,false);
             }
 
+            //By this point, I'm just storing the methods in the correct place.
+            //No error correction.
             HashMap<String,HashMap<String,HashSet<MethodSignature>>> finalClassMethods = new HashMap<>();
             for(TypeElement mClass : classMethods.keySet()){
                 String className = toRuntimeClassName(mClass, processingEnv.getElementUtils());
@@ -104,18 +121,22 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
         return false;
     }
 
-    private void calc(DAG<TypeElement> dag, TypeElement root, HashMap<TypeElement,HashSet<MethodSignature>> classMethods, HashSet<MethodSignature> collectedMethods, HashMap<TypeElement,HashSet<MethodSignature>> loggedErrors){
+    private void calc(DAG<TypeElement> dag, TypeElement root, HashMap<TypeElement,HashSet<MethodSignature>> classMethods, HashSet<MethodSignature> collectedMethods, HashMap<TypeElement,HashSet<MethodSignature>> loggedErrors, boolean haveSeenEventSubscription, boolean haveSeenMetaEventSubscription){
         List<? extends Element> enclosedElements = root.getEnclosedElements();
-        boolean isInterface = root.getKind().isInterface();
         HashSet<MethodSignature> privateMethods = new HashSet<>();
+        boolean foundMetaEventSubcription = false;
+        boolean foundEventSubcription = false;
         for(Element check : enclosedElements){
             if(!(check instanceof ExecutableElement method)) continue;
             if(method.getKind() != ElementKind.METHOD) continue;
 
+            /// TODO: I need to include the MetaEventSubscription into this.
+
             EventSubscription eventAnnotation = method.getAnnotation(EventSubscription.class);
+            MetaEventSubscription metaEventAnnotation = method.getAnnotation(MetaEventSubscription.class);
             /// TODO: I need to see if this current method will override anything that's in collectedMethods.
             /// If something is overriden, if you don't have the eventAnnotation annotation, throw an error.
-            if(eventAnnotation == null){
+            if(eventAnnotation == null && metaEventAnnotation == null){
 
                 MethodSignature testSignature = generateTestMethodSignature(method);
                 //This error was already logged, don't log it more than once.
@@ -130,7 +151,9 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
                             break;
                         }
                     }
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"The class " + testSignature.originClass + " overrides the method " + testSignature.methodName + " of class " + originalSignature.originClass + ", but doesn't include the @EventSubscription annotation.", method);
+
+                    String subscriptionType = (originalSignature.isMetaEvent) ? "@MetaEventSubscription" : "@EventSubscription";
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"The class " + testSignature.originClass + " overrides the method " + testSignature.methodName + " of class " + originalSignature.originClass + ", but doesn't include the "+ subscriptionType +" annotation.", method);
                     loggedErrors.computeIfAbsent(root, k->new HashSet<>()).add(testSignature);
                 }
                 continue;
@@ -141,11 +164,16 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
             //Do the verification that this method is done right.
             //Since MethodSignature already has an override on its equals, adding anything to collectedMethods should override.
             /// TODO: Take the validation from the other method and put it here, null as placeholder
-            MethodSignature validSignature = validateEventSubscriberMethod(method);
+            boolean hasEventSubscription = method.getAnnotation(EventSubscription.class) != null;
+            boolean hasMetaEventSubscription = method.getAnnotation(MetaEventSubscription.class) != null;
+
+            MethodSignature validSignature = validateEventSubscriberMethod(method,hasEventSubscription,hasMetaEventSubscription);
             //Error occurred, stop
             if(validSignature == null) return;
 
 
+            if(hasEventSubscription) foundEventSubcription = true;
+            if(hasMetaEventSubscription) foundMetaEventSubcription = true;
 
             if(method.getModifiers().contains(Modifier.PRIVATE)){
                 privateMethods.add(validSignature);
@@ -156,18 +184,38 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
             }
         }
 
+        if(foundEventSubcription && foundMetaEventSubcription){
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"A class cannot have methods MetaEventSubscription and EventSubscription at the same time, but " + root.getQualifiedName() + " attempted to do so.",root);
+            return;
+        }
+
+
+        if((foundEventSubcription || haveSeenEventSubscription) && (foundMetaEventSubcription || haveSeenMetaEventSubscription)){
+            processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR,
+                    "Conflict in " + root.getQualifiedName() + ": an ancestor defines " +
+                            (haveSeenEventSubscription ? "@EventSubscription" : "@MetaEventSubscription") +
+                            " methods, but this class defines " +
+                            (foundEventSubcription ? "@EventSubscription" : "@MetaEventSubscription") +
+                            " methods. Classes cannot mix both types across inheritance.",
+                    root
+            );
+            return;
+        }
+
         HashSet<MethodSignature> methodsOfClass = classMethods.computeIfAbsent(root, k->new HashSet<>());
         methodsOfClass.addAll(collectedMethods);
         methodsOfClass.addAll(privateMethods);
 
         Set<TypeElement> childs = dag.getChildren(root);
         for(TypeElement child : childs){
-            calc(dag,child,classMethods,new HashSet<MethodSignature>(collectedMethods), loggedErrors);
+            calc(dag,child,classMethods,new HashSet<MethodSignature>(collectedMethods), loggedErrors, foundEventSubcription || haveSeenEventSubscription, foundMetaEventSubcription || haveSeenMetaEventSubscription);
         }
     }
 
-    //A return null means error occurred, stop
-    private MethodSignature validateEventSubscriberMethod(ExecutableElement method){
+    //This is the class that I need to modify for the meta events.
+    //It'll follow the same logic, but I just need to make sure that whatever the event type is matches.
+    private MethodSignature validateEventSubscriberMethod(ExecutableElement method, boolean hasEventSubscription, boolean hasMetaEventSubscription){
         if(method.getParameters().isEmpty()){
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"EventSubscription methods must include an event parameter, and optionally an adapter object", method);
             return null;
@@ -190,6 +238,60 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
         if(checkIfIterable(paramMirror)){
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"EventSubscription events cannot be a Map, Array, nor other Iterable types", firstParameter);
             return null;
+        }
+
+        if(hasEventSubscription && hasMetaEventSubscription){
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"MetaEventSubscription and EventSubscription annotations are mutually exclusive", method);
+            return null;
+        }
+
+        Types typeUtils = processingEnv.getTypeUtils();
+        Elements elementUtils = processingEnv.getElementUtils();
+
+        TypeMirror metaEventClass = elementUtils
+                .getTypeElement("org.treepluginframework.meta_events.TPFMetaEvent")
+                .asType();
+
+        TypeElement enclosingClass = (TypeElement) method.getEnclosingElement();
+
+        if(hasMetaEventSubscription){
+
+
+
+            if (enclosingClass.getAnnotation(TPFNode.class) != null) {
+                processingEnv.getMessager().printMessage(
+                        Diagnostic.Kind.ERROR,
+                        "Methods annotated with @MetaEventSubscription cannot be declared inside a @TPFNode class.",
+                        method
+                );
+                return null;
+            }
+
+            TypeMirror erasedParam = typeUtils.erasure(paramMirror);
+            TypeMirror erasedMetaEvent = typeUtils.erasure(metaEventClass);
+
+            if (!typeUtils.isAssignable(erasedParam, erasedMetaEvent)) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                        "MetaEventSubscription must have a class extending TPFMetaEvent as its type", firstParameter);
+                return null;
+            }
+        }
+
+        if(hasEventSubscription){
+            if (enclosingClass.getAnnotation(TPFMetaEventListener.class) != null) {
+                processingEnv.getMessager().printMessage(
+                        Diagnostic.Kind.ERROR,
+                        "Methods annotated with @EventSubscription cannot be declared inside a @TPFMetaEventListener class.",
+                        method
+                );
+                return null;
+            }
+
+            if(typeUtils.isAssignable(paramMirror,metaEventClass))
+            {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,"EventSubscription cannot have a class extending TPFMetaEvent as its type", firstParameter);
+                return null;
+            }
         }
 
         if(parameters.size() == 2){
@@ -231,11 +333,14 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
         boolean isInterface = typeElement.getKind().isInterface();
         //An interface method(not default) or an abstract method won't get marked as an implementation.
         boolean notImplemented = (isInterface && !method.getModifiers().contains(Modifier.DEFAULT)) || method.getModifiers().contains(Modifier.ABSTRACT);
-        EventSubscription eS = method.getAnnotation(EventSubscription.class);
-        MethodSignature sig = new MethodSignature(enclosingClassName,method.getSimpleName().toString(), paramTypeNames, eS.priority(), parameters.size() == 2, isAbstract || eS.useSubClasses(), method.getModifiers().contains(Modifier.PRIVATE), notImplemented);
+        int priority = (hasEventSubscription) ? method.getAnnotation(EventSubscription.class).priority() : method.getAnnotation(MetaEventSubscription.class).priority();
+        boolean useSubClasses = (hasEventSubscription) ? method.getAnnotation(EventSubscription.class).useSubClasses() : method.getAnnotation(MetaEventSubscription.class).useSubClasses();
+
+        MethodSignature sig = new MethodSignature(enclosingClassName,method.getSimpleName().toString(), paramTypeNames, priority, parameters.size() == 2, isAbstract || useSubClasses, method.getModifiers().contains(Modifier.PRIVATE), notImplemented, hasMetaEventSubscription);
         //methodsOfType.add(sig);
         return sig;
     }
+
 
     private MethodSignature generateTestMethodSignature(ExecutableElement method){
         String enclosingClassName = toRuntimeClassName((TypeElement) method.getEnclosingElement(), processingEnv.getElementUtils());
@@ -256,9 +361,10 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
             }
         }
 
-        return new MethodSignature(enclosingClassName, method.getSimpleName().toString(), paramTypeNames, -1,false,false,false, false);
+        return new MethodSignature(enclosingClassName, method.getSimpleName().toString(), paramTypeNames, -1,false,false,false, false, false);
     }
 
+    /*
     /// TODO: Make it so that if a class has the same event multiple times, you are forced to put a priority.
     /// TODO: Need to do a type hierarchy walk.
     ///
@@ -331,7 +437,7 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
          * They’re already tracked with origin info, so you know which class declared the method.
          *
          * Fire events normally — any instance of a subclass will now invoke the inherited subscriber methods correctly.
-         */
+
         
         HashSet<TypeElement> abstractClasses = new HashSet<>();
         HashSet<TypeElement> interfaceClasses = new HashSet<>();
@@ -422,6 +528,7 @@ public class TPFEventSubscriberProcessor extends AbstractProcessor {
         writeEventFile(eventFile);
         return true;
     }
+     */
 
     private String toRuntimeClassName(TypeElement typeElement, Elements elementUtils) {
         String packageName = elementUtils.getPackageOf(typeElement).getQualifiedName().toString();

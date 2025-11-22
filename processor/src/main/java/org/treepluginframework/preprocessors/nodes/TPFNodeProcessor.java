@@ -32,6 +32,8 @@ public class TPFNodeProcessor extends AbstractProcessor {
         this.filer = processingEnv.getFiler();
     }
 
+    /// Oh man, META Event is going to be a pain to add here.
+
     /// TODO: TPFValue fields need to be able to be inherited. This means that I have to wait until processing rounds are over in order to do that.
     /// Which means that TPFValue needs to get its own processor instead.
     /// Its okay to keep the constructor parameters part of TPFValue here, since the inheritance thing only applies to class fields anwyways.

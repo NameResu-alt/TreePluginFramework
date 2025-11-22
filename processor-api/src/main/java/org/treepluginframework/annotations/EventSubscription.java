@@ -21,6 +21,7 @@ public @interface EventSubscription {
      * For abstract classes, this is automatically set to true
      * @return boolean
      */
+    @Deprecated
     boolean useSubClasses() default false;
 
     /***

@@ -7,11 +7,14 @@ import org.treepluginframework.component_architecture.TPFValueRepository;
 
 import java.io.File;
 import java.util.HashMap;
+import java.util.Scanner;
+import java.util.concurrent.CountDownLatch;
 
 public class Main {
     public static void main(String[] args)
     {
         TPF check = new TPF();
+        //TPFEntry tpfEntry = check.getEntry();
 
         File findFile = new File("C:\\Users\\Banka\\Downloads\\kitpvp.yml");
         if(findFile.exists()){
@@ -19,18 +22,39 @@ public class Main {
             check.getValueRepository().addConfigurationFile(findFile);
         }
 
+
+        // HookExtendTest signals the latch when connected
+        HookExtendTest hook = new HookExtendTest(check);
+        hook.connectToServer();
+        //hook.sendDummyMessage();
+        check.addMetaEventListener(hook);
+
+
         check.start();
 
         TickEvent testEvent = new TickEvent();
         TickEventAdapter adapter = new TickEventAdapter(testEvent);
 
+        //tpfEntry.getNode(EventEntryPoint.class);
         EventEntryPoint entry = check.getNodeRepository().getNode(EventEntryPoint.class);
 
         System.out.println("Dispatcher Check: " + (entry == null));
-        check.getEventDispatcher().emit(entry, adapter);
-        check.getEventDispatcher().emit(entry, adapter);
-        check.getEventDispatcher().emit(entry, adapter);
+        if(entry != null){
+            Scanner scan = new Scanner(System.in);
+            while(true){
+                String nextLine = scan.nextLine();
+                if(nextLine.equals("exit")) break;
+                //tpfEntry.emitEvent(entry,adapter);
+                check.getEventDispatcher().emit(entry,adapter);
+                check.getEventDispatcher().printDAG();
+            }
+        }
 
+        //check.getEventDispatcher().emit(entry, adapter);
+        //check.getEventDispatcher().emit(entry, adapter);
+        //check.getEventDispatcher().emit(entry, adapter);
+
+        /*
         TPFValueRepository.FileValueRequest request = new TPFValueRepository.FileValueRequest("kitpvp.yml");
         request.addWantedValue("scout",String.class,null);
         request.addWantedValue("scout",Integer.class,null);

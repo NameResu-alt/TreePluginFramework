@@ -48,6 +48,21 @@
             <artifactId>classgraph</artifactId>
             <version>4.8.181</version>
         </dependency>
+
+        <!-- SLF4J API -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.17</version>
+        </dependency>
+
+        <!-- Logging backend (Logback classic is common) -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.5.19</version>
+        </dependency>
+
     </dependencies>
 
 </project>

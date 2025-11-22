@@ -2,7 +2,7 @@ package org.treepluginframework.meta_events.values;
 
 import java.util.UUID;
 
-public class TPFConfigurationFileValueCachedMetaEvent extends TPFValueMetaEvent{
+public class TPFConfigurationFileValueCachedMetaEvent extends TPFValueMetaEvent<TPFConfigurationFileValueCachedMetaEvent>{
 
     private final String fileName;
     private final String location;
@@ -12,5 +12,13 @@ public class TPFConfigurationFileValueCachedMetaEvent extends TPFValueMetaEvent{
 
         this.fileName = fileName;
         this.location = location;
+    }
+
+    public String getFileName() {
+        return fileName;
+    }
+
+    public String getLocation() {
+        return location;
     }
 }

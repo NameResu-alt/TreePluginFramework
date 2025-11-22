@@ -7,7 +7,6 @@ import org.treepluginframework.values.TPFStructureFile;
 import org.treepluginframework.values.TPFValueFile;
 
 import java.io.*;
-import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -23,10 +22,7 @@ public class TPF {
 
     private static final Logger logger = Logger.getLogger(TPF.class.getName());
 
-    private UUID tpfUUID = UUID.randomUUID();
-
-    private HashMap<Class<?>,Object> loggers = new HashMap<>();
-
+    private final UUID tpfUUID = UUID.randomUUID();
 
     public TPF(File globalConfigurationFile){
         setup(globalConfigurationFile);
@@ -35,6 +31,8 @@ public class TPF {
     public TPF(){
         setup(null);
     }
+
+    public UUID getTpfUUID(){return tpfUUID;};
 
     public TPFNodeRepository getNodeRepository(){
         return this.nodeRepository;
@@ -58,9 +56,9 @@ public class TPF {
     }
 
     private void setup(File configurationFile) {
-        this.valueFile = findTPFValuesFile();
-        this.structureFile = findTPFStructureFile();
-        this.eventFile = findTPFEventFile();
+        this.valueFile = loadMetaFile("META-INF/tpf/value.json", TPFValueFile.class);;
+        this.structureFile = loadMetaFile("META-INF/tpf/structure.json", TPFStructureFile.class);
+        this.eventFile = loadMetaFile("META-INF/tpf/event.json", TPFEventFile.class);
 
         boolean hasMetadata = structureFile != null;
         boolean hasEvent = eventFile != null;
@@ -78,7 +76,8 @@ public class TPF {
         this.eventDispatcher = new TPFEventDispatcher(
                 hasMetadata ? structureFile : null,
                 hasEvent ? eventFile : null,
-                hasMetadata ? nodeRepository : null
+                hasMetadata ? nodeRepository : null,
+                this
         );
     }
 
@@ -110,58 +109,29 @@ public class TPF {
         return this.nodeRepository.getNode(classType);
     }
 
-    private TPFEventFile findTPFEventFile(){
-        try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/event.json")) {
-            if (is != null) {
-                ObjectMapper mapper = new ObjectMapper();
-                TPFEventFile metaFile = mapper.readValue(is, TPFEventFile.class);
-                return metaFile;
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
 
-        return null;
+    private <T> T loadMetaFile(String path, Class<T> type) {
+        try (InputStream is = TPF.class.getClassLoader().getResourceAsStream(path)) {
+            if (is == null) return null;
+            return new ObjectMapper().readValue(is, type);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load " + path, e);
+        }
     }
 
-    private TPFValueFile findTPFValuesFile(){
-        try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/value.json")) {
-            if (is != null) {
-                ObjectMapper mapper = new ObjectMapper();
-                TPFValueFile metaFile = mapper.readValue(is, TPFValueFile.class);
-                return metaFile;
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        return null;
-    }
-
-    private TPFStructureFile findTPFStructureFile(){
-        try(InputStream is = TPF.class.getClassLoader()
-                .getResourceAsStream("META-INF/tpf/structure.json")) {
-            if (is != null) {
-                ObjectMapper mapper = new ObjectMapper();
-                TPFStructureFile metaFile = mapper.readValue(is, TPFStructureFile.class);
-                return metaFile;
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        return null;
-    }
 
     public void injectFieldValues(Object ob){
         this.valueRepository.injectFields(ob);
     }
 
-    private void tpfLogEvent(TPFMetaEvent log){
-
+    void logMetaEvent(TPFMetaEvent<?> metaEvent){
+        this.eventDispatcher.emitMetaEvent(metaEvent);
     }
 
+
+    public void addMetaEventListener(Object metaEventListener){
+        if(metaEventListener == null) return;
+        this.getEventDispatcher().addMetaEventListener(metaEventListener);
+    }
 
 }

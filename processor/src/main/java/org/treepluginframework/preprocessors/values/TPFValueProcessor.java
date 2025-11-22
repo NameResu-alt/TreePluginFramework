@@ -71,7 +71,7 @@ public class TPFValueProcessor extends AbstractProcessor {
             TPFValueFile mergedFile = findPreviousValueFiles();
 
 
-            DAG<TypeElement> dag = DAG.regular();//new DAG<>();
+            DAG<TypeElement> dag = new DAG<>();//DAG.regular();//new DAG<>();
             Types typeUtils = processingEnv.getTypeUtils();
             for(TypeElement type : allTypes){
 

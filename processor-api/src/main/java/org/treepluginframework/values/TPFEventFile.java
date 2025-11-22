@@ -1,6 +1,5 @@
 package org.treepluginframework.values;
 
-import org.treepluginframework.component_architecture.EventDispatcher;
 
 import java.util.*;
 

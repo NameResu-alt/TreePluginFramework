@@ -15,6 +15,7 @@ public class TPFStructureFile {
 
     public HashMap<String,String> aliases = new HashMap<>();
 
+    //Class, and Constructor Information.
     public LinkedHashMap<String, ConstructorInformation> constructorInformation = new LinkedHashMap<>();
     public Date timeCreated;
 
@@ -46,6 +47,7 @@ public class TPFStructureFile {
     public boolean isEmpty(){
         return constructorInformation.isEmpty();
     }
+
 
 }
 

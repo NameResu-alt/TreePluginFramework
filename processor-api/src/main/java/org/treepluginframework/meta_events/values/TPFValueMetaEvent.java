@@ -4,7 +4,7 @@ import org.treepluginframework.meta_events.TPFMetaEvent;
 
 import java.util.UUID;
 
-public class TPFValueMetaEvent extends TPFMetaEvent {
+public abstract class TPFValueMetaEvent<T extends TPFValueMetaEvent<T>> extends TPFMetaEvent<T> {
 
     public TPFValueMetaEvent(UUID tpfUUID, String eventDescription) {
         super(tpfUUID, eventDescription);

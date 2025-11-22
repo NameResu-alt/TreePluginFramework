@@ -10,6 +10,13 @@ import java.lang.annotation.Target;
 //If a class is annotated with TPFMetaEventListener, it'll be created like the nodes of the system.
 //except it won't go into the tree structure, instead it'll just become a part of a list of ForeignEventListeners.
 //A class can be a foreign event listener without being annotated with TPFMetaEventListener, it'll just have to be manually added at runtime.
+
+/***
+ * If a class is annotated with TPFMetaEventListener, it will immediately be added to the listeners once TPF is started.n
+ * If a class has this annotation, it's incompatible with EventSubscription annotations and must use MetaEventSubscription
+ * TPFMetaEventListeners do not go into the tree stucture, instead they are held in a map in TPF class, and have their methods called asynchronously as Meta events come in.
+ *
+ */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface TPFMetaEventListener {

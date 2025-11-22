@@ -1,19 +1,26 @@
 package org.treepluginframework.meta_events.event_propagation;
 
-import org.treepluginframework.meta_events.TPFMetaEvent;
 import org.treepluginframework.meta_events.dag.TPFDAGMetaEvent;
-import org.treepluginframework.meta_events.dag.node_data.DAGNodeMetadata;
 
 import java.util.UUID;
 
-public class TPFEventPropagationMetaEvent extends TPFDAGMetaEvent {
+public abstract class TPFEventPropagationMetaEvent<T extends TPFEventPropagationMetaEvent<T>> extends TPFDAGMetaEvent<T> {
 
     private final UUID eventUUID;
+    private final Class<?> eventClass;
 
-    public TPFEventPropagationMetaEvent(UUID tpf_uuid, String eventDescription, UUID dagUUID, int version, UUID eventUUID) {
+    public TPFEventPropagationMetaEvent(UUID tpf_uuid, String eventDescription, UUID dagUUID, long version, UUID eventUUID, Class<?> eventClass) {
         super(tpf_uuid, eventDescription, dagUUID, version);
 
         this.eventUUID = eventUUID;
+        this.eventClass = eventClass;
+    }
 
+    public UUID getEventUUID() {
+        return eventUUID;
+    }
+
+    public Class<?> getEventClass(){
+        return eventClass;
     }
 }

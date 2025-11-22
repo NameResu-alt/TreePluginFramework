@@ -12,6 +12,7 @@ public class MethodSignature {
     public boolean expectsAdapter;
     public boolean useSubClasses;
     public boolean isPrivate;
+    public boolean isMetaEvent;
     /***
      * If true, means that this method is an interface(not default)/abstract method.
      */
@@ -21,7 +22,7 @@ public class MethodSignature {
 
     }
 
-    public MethodSignature(String originClass, String methodName, List<String> parameterNames, int priority, boolean expectsAdapter, boolean useSubClasses, boolean isPrivate, boolean notImplementation){
+    public MethodSignature(String originClass, String methodName, List<String> parameterNames, int priority, boolean expectsAdapter, boolean useSubClasses, boolean isPrivate, boolean notImplementation, boolean isMetaEvent){
         this.originClass = originClass;
         this.methodName = methodName;
         this.parameterTypes = parameterNames;
@@ -31,6 +32,7 @@ public class MethodSignature {
         this.useSubClasses = useSubClasses;
         this.isPrivate = isPrivate;
         this.notImplementation = notImplementation;
+        this.isMetaEvent = isMetaEvent;
     }
 
     //If the method name is the same,
