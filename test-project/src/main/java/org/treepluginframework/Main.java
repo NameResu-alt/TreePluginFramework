@@ -71,7 +71,7 @@ public class Main {
         /*
         ObjectMapper map = new ObjectMapper();
         try {
-            String test = map.writerWithDefaultPrettyPrinter().writeValueAsString(new TestJson("Ricardo",23,true));
+            String test = map.writerWithDefaultPrettyPrinter().writeValueAsString(new TestJson("Name",23,true));
             System.out.println(test);
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
